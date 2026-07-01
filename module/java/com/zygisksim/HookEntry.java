@@ -15,6 +15,8 @@ import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.lang.reflect.InvocationHandler;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -90,11 +92,11 @@ public class HookEntry {
             
             Field f1 = pineConfigClass.getDeclaredField("disableHiddenApiPolicy");
             f1.setAccessible(true);
-            f1.setBoolean(null, false);
+            f1.setBoolean(null, true);
 
             Field f2 = pineConfigClass.getDeclaredField("disableHiddenApiPolicyForPlatformDomain");
             f2.setAccessible(true);
-            f2.setBoolean(null, false);
+            f2.setBoolean(null, true);
             logStatic("Disabled Pine's native HiddenAPI bypass.");
         } catch (Throwable t) {
             logStatic("Failed to disable Pine HiddenAPI bypass: " + t.getMessage());
@@ -184,8 +186,11 @@ public class HookEntry {
         try { hookEuiccManagerGetEuiccInfo(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerGetEuiccInfo failed: " + t.getMessage());
         }
-        try { hookPackageManagerHasSystemFeature(); } catch (Throwable t) {
-            logStatic("  WARN: hookPackageManagerHasSystemFeature failed: " + t.getMessage());
+        try { 
+            hookActivityThreadGetPackageManager(); 
+            pollAndMockPackageManagerField();
+        } catch (Throwable t) {
+            logStatic("  WARN: Package manager hybrid hook failed: " + t.getMessage());
         }
         try { hookForActivationCode(); } catch (Throwable t) {
             logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
@@ -247,46 +252,118 @@ public class HookEntry {
         }
     }
 
-    private static void hookPackageManagerHasSystemFeature() {
+    private static void hookActivityThreadGetPackageManager() {
         try {
-            Class<?> apmClass = Class.forName("android.app.ApplicationPackageManager");
-            
-            // Hook 1: hasSystemFeature(String)
-            try {
-                Method m1 = apmClass.getDeclaredMethod("hasSystemFeature", String.class);
-                Pine.hook(m1, new MethodHook() {
-                    @Override
-                    public void afterCall(Pine.CallFrame callFrame) {
-                        String featureName = (String) callFrame.args[0];
-                        if (featureName != null && featureName.startsWith("android.hardware.telephony.euicc")) {
-                            callFrame.setResult(true);
-                        }
-                    }
-                });
-            } catch (Throwable t) {
-                logStatic("  Failed to hook hasSystemFeature(String): " + t.getMessage());
-            }
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method getPackageManager = activityThreadClass.getDeclaredMethod("getPackageManager");
+            Pine.hook(getPackageManager, new MethodHook() {
+                private Object mMockPm = null;
 
-            // Hook 2: hasSystemFeature(String, int)
-            try {
-                Method m2 = apmClass.getDeclaredMethod("hasSystemFeature", String.class, int.class);
-                Pine.hook(m2, new MethodHook() {
-                    @Override
-                    public void afterCall(Pine.CallFrame callFrame) {
-                        String featureName = (String) callFrame.args[0];
-                        if (featureName != null && featureName.startsWith("android.hardware.telephony.euicc")) {
-                            callFrame.setResult(true);
-                        }
-                    }
-                });
-            } catch (Throwable t) {
-                logStatic("  Failed to hook hasSystemFeature(String, int): " + t.getMessage());
-            }
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) throws Throwable {
+                    Object originalPm = callFrame.getResult();
+                    if (originalPm == null) return;
 
-            logStatic("  Hooked ApplicationPackageManager.hasSystemFeature()");
+                    if (mMockPm != null) {
+                        callFrame.setResult(mMockPm);
+                        return;
+                    }
+
+                    final Object targetPm = originalPm;
+                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+                    mMockPm = Proxy.newProxyInstance(
+                            iPackageManagerClass.getClassLoader(),
+                            new Class<?>[]{iPackageManagerClass},
+                            new InvocationHandler() {
+                                @Override
+                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                    if ("hasSystemFeature".equals(method.getName())) {
+                                        if (args != null && args.length > 0) {
+                                            String feature = (String) args[0];
+                                            if ("android.hardware.telephony.euicc".equals(feature)) {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    try {
+                                        return method.invoke(targetPm, args);
+                                    } catch (java.lang.reflect.InvocationTargetException e) {
+                                        throw e.getCause();
+                                    }
+                                }
+                            }
+                    );
+                    callFrame.setResult(mMockPm);
+                }
+            });
+            logStatic("Successfully hooked ActivityThread.getPackageManager() via Pine.");
         } catch (Throwable t) {
-            logStatic("  Failed to hook hasSystemFeature: " + t.getMessage());
+            logStatic("Failed to hook ActivityThread.getPackageManager(): " + t.getMessage());
+            logStackTrace(t);
         }
+    }
+
+    private static void pollAndMockPackageManagerField() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+                    Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+                    sPackageManagerField.setAccessible(true);
+
+                    Object originalPm = null;
+                    for (int i = 0; i < 100; i++) { // Poll for up to 10 seconds
+                        originalPm = sPackageManagerField.get(null);
+                        if (originalPm != null) {
+                            break;
+                        }
+                        Thread.sleep(100);
+                    }
+
+                    if (originalPm == null) {
+                        logStatic("sPackageManager is still null after 10 seconds. Giving up field replacement.");
+                        return;
+                    }
+
+                    if (Proxy.isProxyClass(originalPm.getClass())) {
+                        logStatic("sPackageManager is already a proxy, skipping field override.");
+                        return;
+                    }
+
+                    final Object targetPm = originalPm;
+                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+                    Object mockPm = Proxy.newProxyInstance(
+                            iPackageManagerClass.getClassLoader(),
+                            new Class<?>[]{iPackageManagerClass},
+                            new InvocationHandler() {
+                                @Override
+                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                    if ("hasSystemFeature".equals(method.getName())) {
+                                        if (args != null && args.length > 0) {
+                                            String feature = (String) args[0];
+                                            if ("android.hardware.telephony.euicc".equals(feature)) {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    try {
+                                        return method.invoke(targetPm, args);
+                                    } catch (java.lang.reflect.InvocationTargetException e) {
+                                        throw e.getCause();
+                                    }
+                                }
+                            }
+                    );
+
+                    sPackageManagerField.set(null, mockPm);
+                    logStatic("Successfully replaced ActivityThread.sPackageManager field with mock proxy.");
+                } catch (Throwable t) {
+                    logStatic("Background sPackageManager field override failed: " + t.getMessage());
+                    logStackTrace(t);
+                }
+            }
+        }).start();
     }
 
     private static void hookForActivationCode() throws Exception {
