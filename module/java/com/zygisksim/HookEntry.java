@@ -11,10 +11,14 @@ import android.telephony.euicc.EuiccManager;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 import top.canyie.pine.Pine;
 import top.canyie.pine.callback.MethodHook;
@@ -42,6 +46,37 @@ public class HookEntry {
      */
     private static final String FAKE_EID = "89049032000000000000000000000001";
 
+    /**
+     * Spoofed Build fields — Google Pixel 8 (known eSIM-capable device).
+     * Many eSIM apps check Build.MODEL against a whitelist of supported devices.
+     * These are only applied inside the target app's process, not system-wide.
+     */
+    private static final String SPOOF_MODEL = "Pixel 8";
+    private static final String SPOOF_DEVICE = "shiba";
+    private static final String SPOOF_MANUFACTURER = "Google";
+    private static final String SPOOF_BRAND = "google";
+    private static final String SPOOF_PRODUCT = "shiba";
+
+    /** Map of system property names to spoofed values */
+    private static final Map<String, String> SPOOFED_PROPS = new HashMap<>();
+    static {
+        SPOOFED_PROPS.put("ro.product.model", SPOOF_MODEL);
+        SPOOFED_PROPS.put("ro.product.device", SPOOF_DEVICE);
+        SPOOFED_PROPS.put("ro.product.manufacturer", SPOOF_MANUFACTURER);
+        SPOOFED_PROPS.put("ro.product.brand", SPOOF_BRAND);
+        SPOOFED_PROPS.put("ro.product.name", SPOOF_PRODUCT);
+        // Vendor-specific overrides (some apps read these variants)
+        SPOOFED_PROPS.put("ro.product.vendor.model", SPOOF_MODEL);
+        SPOOFED_PROPS.put("ro.product.vendor.device", SPOOF_DEVICE);
+        SPOOFED_PROPS.put("ro.product.vendor.manufacturer", SPOOF_MANUFACTURER);
+        SPOOFED_PROPS.put("ro.product.vendor.brand", SPOOF_BRAND);
+        SPOOFED_PROPS.put("ro.product.vendor.name", SPOOF_PRODUCT);
+        SPOOFED_PROPS.put("ro.product.system.model", SPOOF_MODEL);
+        SPOOFED_PROPS.put("ro.product.system.device", SPOOF_DEVICE);
+        SPOOFED_PROPS.put("ro.product.system.manufacturer", SPOOF_MANUFACTURER);
+        SPOOFED_PROPS.put("ro.product.system.brand", SPOOF_BRAND);
+    }
+
     public static void init(String logDir) {
         sLogDir = logDir;
         logStatic("ZygiskSIM Java payload initializing (Pine)...");
@@ -49,10 +84,14 @@ public class HookEntry {
         try {
             loadPineLibrary();
 
+            // Spoof device identity FIRST (before any app code reads Build fields)
+            spoofBuildFields();
+
             hookApplicationOnCreate();
             hookEuiccManagerIsEnabled();
             hookEuiccManagerGetEid();
             hookPackageManagerHasSystemFeature();
+            hookSystemPropertiesGet();
             hookForActivationCode();
 
             logStatic("All Pine hooks successfully installed!");
@@ -193,6 +232,102 @@ public class HookEntry {
             }
         });
         logStatic("  Hooked DownloadableSubscription.forActivationCode()");
+    }
+
+    // =========================================================================
+    // Spoof: android.os.Build static fields — make device look like Pixel 8
+    // This runs via reflection to modify the final static fields in-process.
+    // Only affects THIS app process, not the system.
+    // =========================================================================
+
+    private static void spoofBuildFields() {
+        try {
+            Class<?> buildClass = android.os.Build.class;
+            setStaticField(buildClass, "MODEL", SPOOF_MODEL);
+            setStaticField(buildClass, "DEVICE", SPOOF_DEVICE);
+            setStaticField(buildClass, "MANUFACTURER", SPOOF_MANUFACTURER);
+            setStaticField(buildClass, "BRAND", SPOOF_BRAND);
+            setStaticField(buildClass, "PRODUCT", SPOOF_PRODUCT);
+            logStatic("  Spoofed Build fields: MODEL=" + SPOOF_MODEL + ", DEVICE=" + SPOOF_DEVICE
+                    + ", MANUFACTURER=" + SPOOF_MANUFACTURER + ", BRAND=" + SPOOF_BRAND);
+        } catch (Throwable t) {
+            logStatic("  Failed to spoof Build fields: " + t.getMessage());
+        }
+    }
+
+    private static void setStaticField(Class<?> clazz, String fieldName, Object value) {
+        try {
+            Field field = clazz.getDeclaredField(fieldName);
+            field.setAccessible(true);
+
+            // Remove 'final' modifier via Field's own modifiers field
+            // On Android, the field holding modifiers is called "accessFlags"
+            try {
+                Field modifiersField = Field.class.getDeclaredField("accessFlags");
+                modifiersField.setAccessible(true);
+                modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+            } catch (NoSuchFieldException e) {
+                // Try the standard Java name
+                try {
+                    Field modifiersField = Field.class.getDeclaredField("modifiers");
+                    modifiersField.setAccessible(true);
+                    modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+                } catch (NoSuchFieldException ignored) {
+                    // On some Android versions, final removal isn't needed for set()
+                }
+            }
+
+            field.set(null, value);
+        } catch (Throwable t) {
+            logStatic("    Failed to set Build." + fieldName + ": " + t.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // Hook: SystemProperties.get() — intercept ro.product.* system properties
+    // Some apps read device info via SystemProperties instead of Build fields.
+    // =========================================================================
+
+    private static void hookSystemPropertiesGet() {
+        try {
+            Class<?> sysPropClass = Class.forName("android.os.SystemProperties");
+
+            // Hook get(String key)
+            try {
+                Method get1 = sysPropClass.getDeclaredMethod("get", String.class);
+                Pine.hook(get1, new MethodHook() {
+                    @Override
+                    public void afterCall(Pine.CallFrame callFrame) {
+                        String key = (String) callFrame.args[0];
+                        if (key != null && SPOOFED_PROPS.containsKey(key)) {
+                            String spoofed = SPOOFED_PROPS.get(key);
+                            logStatic("Spoofed SystemProperties.get(\"" + key + "\") -> " + spoofed);
+                            callFrame.setResult(spoofed);
+                        }
+                    }
+                });
+            } catch (Throwable ignored) {}
+
+            // Hook get(String key, String def)
+            try {
+                Method get2 = sysPropClass.getDeclaredMethod("get", String.class, String.class);
+                Pine.hook(get2, new MethodHook() {
+                    @Override
+                    public void afterCall(Pine.CallFrame callFrame) {
+                        String key = (String) callFrame.args[0];
+                        if (key != null && SPOOFED_PROPS.containsKey(key)) {
+                            String spoofed = SPOOFED_PROPS.get(key);
+                            logStatic("Spoofed SystemProperties.get(\"" + key + "\", ...) -> " + spoofed);
+                            callFrame.setResult(spoofed);
+                        }
+                    }
+                });
+            } catch (Throwable ignored) {}
+
+            logStatic("  Hooked SystemProperties.get() for device spoofing");
+        } catch (Throwable t) {
+            logStatic("  Failed to hook SystemProperties: " + t.getMessage());
+        }
     }
 
     // =========================================================================
