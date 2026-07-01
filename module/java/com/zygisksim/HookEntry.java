@@ -385,7 +385,7 @@ public class HookEntry {
         logStatic("  Activation Code: " + code);
         logStatic("========================================");
 
-        Application app = getApplicationContext();
+        Context app = getApplicationContext();
         if (app != null) {
             try {
                 ClipboardManager clipboard = (ClipboardManager) app.getSystemService(Context.CLIPBOARD_SERVICE);
