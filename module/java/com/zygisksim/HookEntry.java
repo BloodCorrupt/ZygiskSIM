@@ -85,61 +85,63 @@ public class HookEntry {
                 logStatic("PropertyInvalidatedCache disable failed: " + t.getMessage());
             }
 
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            final Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-            sPackageManagerField.setAccessible(true);
+            // Start a background thread to wait for sPackageManager to be initialized by ActivityThread.
+            // This prevents calling ServiceManager.getService("package") early during Zygote specialization,
+            // which causes a binder deadlock/freeze on the main thread.
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+                        Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+                        sPackageManagerField.setAccessible(true);
 
-            Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-            Object mockPm = Proxy.newProxyInstance(
-                    iPackageManagerClass.getClassLoader(),
-                    new Class<?>[]{iPackageManagerClass},
-                    new InvocationHandler() {
-                        private Object mRealPm = null;
+                        Object originalPm = null;
+                        for (int i = 0; i < 100; i++) { // Poll for up to 10 seconds
+                            originalPm = sPackageManagerField.get(null);
+                            if (originalPm != null) {
+                                break;
+                            }
+                            Thread.sleep(100);
+                        }
 
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            if ("hasSystemFeature".equals(method.getName())) {
-                                if (args != null && args.length > 0) {
-                                    String feature = (String) args[0];
-                                    if ("android.hardware.telephony.euicc".equals(feature)) {
-                                        return true; // Fake eSIM hardware support
+                        if (originalPm == null) {
+                            logStatic("sPackageManager is still null after 10 seconds. Giving up.");
+                            return;
+                        }
+
+                        final Object targetPm = originalPm;
+                        Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+                        Object mockPm = Proxy.newProxyInstance(
+                                iPackageManagerClass.getClassLoader(),
+                                new Class<?>[]{iPackageManagerClass},
+                                new InvocationHandler() {
+                                    @Override
+                                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                        if ("hasSystemFeature".equals(method.getName())) {
+                                            if (args != null && args.length > 0) {
+                                                String feature = (String) args[0];
+                                                if ("android.hardware.telephony.euicc".equals(feature)) {
+                                                    return true; // Fake eSIM hardware support
+                                                }
+                                            }
+                                        }
+                                        return method.invoke(targetPm, args);
                                     }
                                 }
-                            }
-                            
-                            if (mRealPm == null) {
-                                // Resolve the real PackageManager dynamically
-                                try {
-                                    Class<?> serviceManagerClass = Class.forName("android.os.ServiceManager");
-                                    Method getService = serviceManagerClass.getDeclaredMethod("getService", String.class);
-                                    IBinder pmBinder = (IBinder) getService.invoke(null, "package");
-                                    Class<?> iPmStubClass = Class.forName("android.content.pm.IPackageManager$Stub");
-                                    Method asInterface = iPmStubClass.getDeclaredMethod("asInterface", IBinder.class);
-                                    mRealPm = asInterface.invoke(null, pmBinder);
-                                    logStatic("Lazily resolved real IPackageManager.");
-                                } catch (Throwable t) {
-                                    logStatic("Failed to lazily resolve real IPackageManager: " + t.getMessage());
-                                }
-                            }
-                            
-                            if (mRealPm == null) {
-                                logStatic("WARNING: targetPm is null during method call: " + method.getName());
-                                Class<?> retType = method.getReturnType();
-                                if (retType == boolean.class) return false;
-                                if (retType == int.class) return 0;
-                                if (retType == long.class) return 0L;
-                                return null;
-                            }
-                            
-                            return method.invoke(mRealPm, args);
-                        }
-                    }
-            );
+                        );
 
-            sPackageManagerField.set(null, mockPm);
-            logStatic("Injected lazy mock IPackageManager into ActivityThread.");
+                        sPackageManagerField.set(null, mockPm);
+                        logStatic("Successfully wrapped sPackageManager with mock proxy.");
+                    } catch (Throwable t) {
+                        logStatic("Background sPackageManager mock failed: " + t.getMessage());
+                        logStackTrace(t);
+                    }
+                }
+            }).start();
+            logStatic("Started background thread to poll sPackageManager.");
         } catch (Throwable t) {
-            logStatic("Failed to mock IPackageManager: " + t.getMessage());
+            logStatic("Failed to start package manager mock thread: " + t.getMessage());
             logStackTrace(t);
         }
     }
