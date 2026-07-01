@@ -247,18 +247,33 @@ public:
             mkdir(cache_dir, 0755);
 
             snprintf(pine_path, sizeof(pine_path), "%s/cache/libpine_zygisksim.so", app_data_dir);
-            int pine_fd = open(pine_path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-            if (pine_fd >= 0) {
-                if (write_all(pine_fd, pine_data, pine_size)) {
-                    LOGI("Wrote libpine.so to %s (%u bytes)", pine_path, pine_size);
+            
+            struct stat st;
+            if (stat(pine_path, &st) == 0 && st.st_size == (off_t)pine_size) {
+                LOGI("Pine library already exists and size matches, skipping write");
+            } else {
+                char tmp_path[512];
+                snprintf(tmp_path, sizeof(tmp_path), "%s/cache/libpine_zygisksim.so.%d.tmp", app_data_dir, getpid());
+                int pine_fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+                if (pine_fd >= 0) {
+                    if (write_all(pine_fd, pine_data, pine_size)) {
+                        close(pine_fd);
+                        if (rename(tmp_path, pine_path) == 0) {
+                            LOGI("Wrote libpine.so to %s (%u bytes) atomically", pine_path, pine_size);
+                        } else {
+                            LOGE("Failed to rename %s to %s (errno=%d)", tmp_path, pine_path, errno);
+                            pine_path[0] = '\0';
+                        }
+                    } else {
+                        LOGE("Failed to write Pine library data");
+                        close(pine_fd);
+                        unlink(tmp_path);
+                        pine_path[0] = '\0';
+                    }
                 } else {
-                    LOGE("Failed to write Pine library data");
+                    LOGE("Failed to open %s for writing (errno=%d)", tmp_path, errno);
                     pine_path[0] = '\0';
                 }
-                close(pine_fd);
-            } else {
-                LOGE("Failed to open %s for writing (errno=%d)", pine_path, errno);
-                pine_path[0] = '\0';
             }
             free(pine_data);
             pine_data = nullptr;

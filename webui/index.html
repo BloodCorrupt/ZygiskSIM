@@ -422,13 +422,12 @@ body {
   </div>
 
   <!-- Actions -->
-  <div class="footer-action">
-    <button class="btn btn-green btn-full" onclick="downloadConfig()" style="padding:0.85rem;">
-      ⬇ Download config.json
+  <div class="footer-action" id="actionContainer">
+    <button class="btn btn-primary btn-full" onclick="applyKsuConfig()" style="padding:0.85rem; font-size:0.9rem;">
+      ⚡ Apply Configuration (Direct Write)
     </button>
-    <div class="adb-cmd">
-      <code>adb push config.json /data/adb/modules/zygisksim/</code>
-      <button class="copy-btn" onclick="copyAdb()">Copy</button>
+    <div style="text-align:center; font-size:0.7rem; color:var(--text-muted); margin-top:0.5rem;">
+      Saves directly to /data/adb/modules/zygisksim/
     </div>
   </div>
 
@@ -616,22 +615,27 @@ function updatePreview() {
   document.getElementById('preview').innerHTML = highlighted;
 }
 
-function downloadConfig() {
+async function applyKsuConfig() {
+  if (!window.ksu) {
+    showToast("❌ This feature only works inside KernelSU Manager!");
+    return;
+  }
+  
   const config = buildConfig();
   const json = JSON.stringify(config, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'config.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast("✓ config.json downloaded");
-}
-
-function copyAdb() {
-  navigator.clipboard.writeText('adb push config.json /data/adb/modules/zygisksim/');
-  showToast("ADB command copied");
+  
+  // Use KSU exec API to write file as root
+  const cmd = `cat << 'EOF' > /data/adb/modules/zygisksim/config.json\n${json}\nEOF\n`;
+  try {
+    const { errno, stdout, stderr } = await window.ksu.exec(cmd);
+    if (errno === 0) {
+      showToast("✓ Config applied! Please reboot.");
+    } else {
+      showToast("❌ Failed to apply config: " + stderr);
+    }
+  } catch (err) {
+    showToast("❌ Error: " + err.message);
+  }
 }
 
 // =====================================================================

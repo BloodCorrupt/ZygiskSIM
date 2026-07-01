@@ -140,8 +140,8 @@ cp "$MODULE_DIR/module.prop" "$ZIP_ROOT/"
 cp "$MODULE_DIR/customize.sh" "$ZIP_ROOT/"
 cp "$MODULE_DIR/post-fs-data.sh" "$ZIP_ROOT/"
 
-# Copy web UI and default config placeholder
-cp -r "$BASE_DIR/webui" "$ZIP_ROOT/"
+# Copy web UI and default config placeholder (KernelSU WebUI uses 'webroot')
+cp -r "$BASE_DIR/webui" "$ZIP_ROOT/webroot"
 echo "{}" > "$ZIP_ROOT/config.json"
 
 # Copy DEX payload
