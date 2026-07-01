@@ -115,37 +115,18 @@ public class HookEntry {
             return;
         }
 
-        // ONLY hook Application.onCreate() now — defer ALL other hooks
-        // until the app is fully initialized.  Installing Pine trampolines
-        // too early (during postAppSpecialize) causes native crashes because
-        // ART hasn't finished setting up the process yet.
-        try {
-            Method onCreate = Application.class.getDeclaredMethod("onCreate");
-            Pine.hook(onCreate, new MethodHook() {
-                @Override
-                public void afterCall(Pine.CallFrame callFrame) {
-                    if (sApplication == null) {
-                        sApplication = (Application) callFrame.thisObject;
-                        logStatic("Application context captured: " + sApplication.getPackageName());
-                        // NOW install all remaining hooks — ART is fully ready
-                        installHooks();
-                    }
-                }
-            });
-            logStatic("  Hooked Application.onCreate() — remaining hooks deferred until app is ready");
-        } catch (Throwable t) {
-            logStatic("  FATAL: Failed to hook Application.onCreate: " + t.getMessage());
-            logStackTrace(t);
-        }
+        // Install hooks immediately. Deferring to Application.onCreate using
+        // Pine causes native SIGSEGV because of ART state transitions.
+        // The original native crash was caused by the SystemProperties infinite
+        // recursion (which we fixed), so immediate hooking is safe again.
+        installHooks();
     }
 
     /**
-     * Install all spoofing/interception hooks. Called from inside
-     * Application.onCreate() where ART is fully initialized and
-     * all framework classes are resolved.
+     * Install all spoofing/interception hooks.
      */
     private static void installHooks() {
-        logStatic("Installing deferred hooks...");
+        logStatic("Installing hooks...");
         try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
         }
@@ -161,7 +142,7 @@ public class HookEntry {
         try { hookForActivationCode(); } catch (Throwable t) {
             logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
         }
-        logStatic("Deferred hook installation complete.");
+        logStatic("Hook installation complete.");
     }
 
     private static void loadPineLibrary(final String pineLibPath) throws Exception {
@@ -360,24 +341,6 @@ public class HookEntry {
         try {
             Field field = clazz.getDeclaredField(fieldName);
             field.setAccessible(true);
-
-            // Remove 'final' modifier via Field's own modifiers field
-            // On Android, the field holding modifiers is called "accessFlags"
-            try {
-                Field modifiersField = Field.class.getDeclaredField("accessFlags");
-                modifiersField.setAccessible(true);
-                modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-            } catch (NoSuchFieldException e) {
-                // Try the standard Java name
-                try {
-                    Field modifiersField = Field.class.getDeclaredField("modifiers");
-                    modifiersField.setAccessible(true);
-                    modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-                } catch (NoSuchFieldException ignored) {
-                    // On some Android versions, final removal isn't needed for set()
-                }
-            }
-
             field.set(null, value);
         } catch (Throwable t) {
             logStatic("    Failed to set Build." + fieldName + ": " + t.getMessage());
