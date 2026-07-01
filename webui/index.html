@@ -622,14 +622,15 @@ async function applyKsuConfig() {
   }
   
   const config = buildConfig();
-  const json = JSON.stringify(config, null, 2);
+  const json = JSON.stringify(config);
   
-  const cmd = `cat << 'EOF' > /data/adb/modules/zygisksim/config.json\n${json}\nEOF\n`;
+  // Escape single quotes for safe shell embedding
+  const escaped = json.replace(/'/g, "'\\''");
+  
+  // Write using printf piped to tee (no heredoc issues)
+  const cmd = "printf '%s' '" + escaped + "' > /data/adb/modules/zygisksim/config.json";
   
   try {
-    // Just execute it directly.
-    // If it returns an empty string, it succeeded (no stdout).
-    // If it throws or returns an error string, we catch it.
     let response = "";
     if (window.ksu.exec.constructor.name === 'AsyncFunction') {
       response = await window.ksu.exec(cmd);
@@ -637,10 +638,19 @@ async function applyKsuConfig() {
       response = window.ksu.exec(cmd);
     }
 
-    if (response && response.includes("not found") || response.includes("denied")) {
-       showToast("❌ Error: " + response);
+    // Verify the file was actually written
+    let verifyResponse = "";
+    const verifyCmd = "cat /data/adb/modules/zygisksim/config.json";
+    if (window.ksu.exec.constructor.name === 'AsyncFunction') {
+      verifyResponse = await window.ksu.exec(verifyCmd);
     } else {
-       showToast("✓ Config saved securely! Please reboot.");
+      verifyResponse = window.ksu.exec(verifyCmd);
+    }
+
+    if (verifyResponse && verifyResponse.includes('"device"')) {
+      showToast("✓ Config saved! Kill the app and reopen.");
+    } else {
+      showToast("⚠ Config may not have saved. Check permissions.");
     }
   } catch (err) {
     showToast("❌ Error: " + err.message);
