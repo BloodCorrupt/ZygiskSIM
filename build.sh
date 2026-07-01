@@ -117,11 +117,11 @@ javac \
     -d "$BUILD_DIR/java" \
     "$MODULE_DIR/java/com/zygisksim/HookEntry.java"
 
-# Convert to DEX
+# Convert to DEX (include ALL .class files — anonymous inner classes like HookEntry$1.class are critical)
 "$D8" \
     --output "$BUILD_DIR/dex" \
     --min-api 26 \
-    "$BUILD_DIR/java/com/zygisksim/HookEntry.class" \
+    $(find "$BUILD_DIR/java" -name "*.class") \
     "$MODULE_DIR/java/pine.jar"
 
 echo "DEX compilation complete"
