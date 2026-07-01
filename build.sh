@@ -143,9 +143,15 @@ cp "$MODULE_DIR/post-fs-data.sh" "$ZIP_ROOT/"
 # Copy DEX payload
 cp "$BUILD_DIR/dex/classes.dex" "$ZIP_ROOT/"
 
-# Copy Pine native libraries
-mkdir -p "$ZIP_ROOT/pine"
-cp -r "$MODULE_DIR/pine/"* "$ZIP_ROOT/pine/"
+# Copy Pine native libraries into system paths so apps can access them
+mkdir -p "$ZIP_ROOT/system/lib"
+mkdir -p "$ZIP_ROOT/system/lib64"
+if [ -f "$MODULE_DIR/pine/armeabi-v7a/libpine.so" ]; then
+    cp "$MODULE_DIR/pine/armeabi-v7a/libpine.so" "$ZIP_ROOT/system/lib/"
+fi
+if [ -f "$MODULE_DIR/pine/arm64-v8a/libpine.so" ]; then
+    cp "$MODULE_DIR/pine/arm64-v8a/libpine.so" "$ZIP_ROOT/system/lib64/"
+fi
 
 # Copy system overlay
 mkdir -p "$ZIP_ROOT/system/etc/permissions"

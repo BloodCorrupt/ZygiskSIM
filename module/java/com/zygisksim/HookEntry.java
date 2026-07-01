@@ -52,24 +52,11 @@ public class HookEntry {
     }
 
     private static void loadPineLibrary() throws Exception {
-        // Determine the current process ABI
-        String abi;
-        if (android.os.Process.is64Bit()) {
-            abi = android.os.Build.SUPPORTED_64_BIT_ABIS[0];
-        } else {
-            abi = android.os.Build.SUPPORTED_32_BIT_ABIS[0];
-        }
-        
-        // Path where Magisk/KernelSU installed our pine library
-        String soPath = "/data/adb/modules/zygisksim/pine/" + abi + "/libpine.so";
-        
-        File soFile = new File(soPath);
-        if (!soFile.exists()) {
-            throw new Exception("libpine.so not found at " + soPath);
-        }
-        
-        System.load(soPath);
-        logStatic("Loaded libpine.so for " + abi);
+        // Since libpine.so is packaged in the module's system/lib and system/lib64
+        // directories, it acts as a standard system library!
+        // This avoids all SELinux and /data/adb permission denied errors for unprivileged apps.
+        System.loadLibrary("pine");
+        logStatic("Successfully loaded libpine.so via System.loadLibrary");
     }
 
     private static void hookApplicationOnCreate() throws Exception {
