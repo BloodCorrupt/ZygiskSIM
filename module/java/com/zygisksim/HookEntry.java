@@ -104,24 +104,48 @@ public class HookEntry {
         parseConfig(configJson);
         buildSpoofedProps();
 
+        // Spoof device identity immediately (no Pine needed, pure reflection)
+        spoofBuildFields();
+
         try {
             loadPineLibrary(pineLibPath);
         } catch (Throwable t) {
             logStatic("Pine library load FAILED — hooks will not be installed: " + t.getMessage());
             logStackTrace(t);
-            // Still spoof Build fields via reflection (no Pine needed)
-            spoofBuildFields();
             return;
         }
 
-        // Spoof device identity FIRST (before any app code reads Build fields)
-        spoofBuildFields();
-
-        // Install each hook independently so a failure in one
-        // never crashes the app or prevents other hooks from working.
-        try { hookApplicationOnCreate(); } catch (Throwable t) {
-            logStatic("  WARN: hookApplicationOnCreate failed: " + t.getMessage());
+        // ONLY hook Application.onCreate() now — defer ALL other hooks
+        // until the app is fully initialized.  Installing Pine trampolines
+        // too early (during postAppSpecialize) causes native crashes because
+        // ART hasn't finished setting up the process yet.
+        try {
+            Method onCreate = Application.class.getDeclaredMethod("onCreate");
+            Pine.hook(onCreate, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    if (sApplication == null) {
+                        sApplication = (Application) callFrame.thisObject;
+                        logStatic("Application context captured: " + sApplication.getPackageName());
+                        // NOW install all remaining hooks — ART is fully ready
+                        installHooks();
+                    }
+                }
+            });
+            logStatic("  Hooked Application.onCreate() — remaining hooks deferred until app is ready");
+        } catch (Throwable t) {
+            logStatic("  FATAL: Failed to hook Application.onCreate: " + t.getMessage());
+            logStackTrace(t);
         }
+    }
+
+    /**
+     * Install all spoofing/interception hooks. Called from inside
+     * Application.onCreate() where ART is fully initialized and
+     * all framework classes are resolved.
+     */
+    private static void installHooks() {
+        logStatic("Installing deferred hooks...");
         try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
         }
@@ -135,10 +159,9 @@ public class HookEntry {
             logStatic("  WARN: hookSystemPropertiesGet failed: " + t.getMessage());
         }
         try { hookForActivationCode(); } catch (Throwable t) {
-            logStatic("  WARN: hookForActivationCode failed (telephony class may not be ready): " + t.getMessage());
+            logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
         }
-
-        logStatic("Hook initialization complete.");
+        logStatic("Deferred hook installation complete.");
     }
 
     private static void loadPineLibrary(final String pineLibPath) throws Exception {
@@ -222,24 +245,6 @@ public class HookEntry {
         } catch (Throwable t) {
             logStatic("  Warning: Pine custom loader setup failed: " + t.getMessage());
         }
-    }
-
-    // =========================================================================
-    // Hook: Application.onCreate() — capture application context
-    // =========================================================================
-
-    private static void hookApplicationOnCreate() throws Exception {
-        Method onCreate = Application.class.getDeclaredMethod("onCreate");
-        Pine.hook(onCreate, new MethodHook() {
-            @Override
-            public void beforeCall(Pine.CallFrame callFrame) {
-                if (sApplication == null) {
-                    sApplication = (Application) callFrame.thisObject;
-                    logStatic("Application context captured: " + sApplication.getPackageName());
-                }
-            }
-        });
-        logStatic("  Hooked Application.onCreate()");
     }
 
     // =========================================================================
