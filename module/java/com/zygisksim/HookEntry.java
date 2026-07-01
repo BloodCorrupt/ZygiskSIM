@@ -85,28 +85,22 @@ public class HookEntry {
                 logStatic("PropertyInvalidatedCache disable failed: " + t.getMessage());
             }
 
-            // Start a background thread to wait for sPackageManager to be initialized by ActivityThread.
-            // This prevents calling ServiceManager.getService("package") early during Zygote specialization,
-            // which causes a binder deadlock/freeze on the main thread.
+            // Start a background thread to resolve the package manager binder safely.
+            // This prevents calling getPackageManager() early on the main thread during Zygote specialization,
+            // which causes a binder deadlock/freeze. Since it runs on a background thread, any blocking is safe.
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-                        Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-                        sPackageManagerField.setAccessible(true);
+                        Method getPm = activityThreadClass.getDeclaredMethod("getPackageManager");
+                        getPm.setAccessible(true);
 
-                        Object originalPm = null;
-                        for (int i = 0; i < 100; i++) { // Poll for up to 10 seconds
-                            originalPm = sPackageManagerField.get(null);
-                            if (originalPm != null) {
-                                break;
-                            }
-                            Thread.sleep(100);
-                        }
+                        // Resolve the package manager (blocks safely on background thread until service is ready)
+                        Object originalPm = getPm.invoke(null);
 
                         if (originalPm == null) {
-                            logStatic("sPackageManager is still null after 10 seconds. Giving up.");
+                            logStatic("Failed to resolve package manager on background thread.");
                             return;
                         }
 
@@ -131,6 +125,8 @@ public class HookEntry {
                                 }
                         );
 
+                        Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+                        sPackageManagerField.setAccessible(true);
                         sPackageManagerField.set(null, mockPm);
                         logStatic("Successfully wrapped sPackageManager with mock proxy.");
                     } catch (Throwable t) {
@@ -139,7 +135,7 @@ public class HookEntry {
                     }
                 }
             }).start();
-            logStatic("Started background thread to poll sPackageManager.");
+            logStatic("Started background thread to resolve and mock IPackageManager.");
         } catch (Throwable t) {
             logStatic("Failed to start package manager mock thread: " + t.getMessage());
             logStackTrace(t);
