@@ -24,3 +24,4 @@ gradlew
 gradlew.bat
 *.kts
 local.properties
+*.zip

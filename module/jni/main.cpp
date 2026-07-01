@@ -5,7 +5,6 @@
  *   1. Companion process (root) reads classes.dex from module directory
  *   2. preAppSpecialize: fetch DEX data via companion socket
  *   3. postAppSpecialize: load DEX via InMemoryDexClassLoader, call HookEntry.init()
- *   4. HookEntry performs ArtMethod swaps to hook EuiccManager methods
  */
 
 #include <stdlib.h>
@@ -23,91 +22,14 @@
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 // =====================================================================
-// ArtMethod swap utilities
-// =====================================================================
-
-static size_t art_method_size = 0;
-
-/**
- * Calculate ArtMethod struct size at runtime by measuring distance
- * between two adjacent static methods in the hook class.
- */
-static void calculateArtMethodSize(JNIEnv *env, jclass hookClass) {
-    jmethodID m1 = env->GetStaticMethodID(hookClass, "sizeHelper1", "()V");
-    jmethodID m2 = env->GetStaticMethodID(hookClass, "sizeHelper2", "()V");
-
-    if (m1 == nullptr || m2 == nullptr) {
-        LOGE("Failed to find size helper methods, using default ArtMethod size");
-        art_method_size = (sizeof(void*) == 8) ? 40 : 28;
-        return;
-    }
-
-    art_method_size = (size_t)((uintptr_t)m2 - (uintptr_t)m1);
-
-    // Sanity check
-    if (art_method_size < 16 || art_method_size > 512) {
-        LOGE("ArtMethod size %zu seems invalid, using default", art_method_size);
-        art_method_size = (sizeof(void*) == 8) ? 40 : 28;
-    } else {
-        LOGI("Detected ArtMethod size: %zu bytes", art_method_size);
-    }
-}
-
-/**
- * Swap ArtMethod data: copies hook's ArtMethod into target's ArtMethod slot.
- *
- * After the swap, calling the target method will execute the hook's code.
- * This is the core technique used by SandHook, Epic, and other ART hooking frameworks.
- *
- * Parameters:
- *   target  - java.lang.reflect.Method to be hooked
- *   hook    - java.lang.reflect.Method with replacement implementation
- */
-static void nativeHookMethod(JNIEnv *env, [[maybe_unused]] jclass clazz,
-                              jobject targetMethod, jobject hookMethod) {
-    if (art_method_size == 0) {
-        LOGE("ArtMethod size not calculated, cannot hook");
-        return;
-    }
-
-    jmethodID target = env->FromReflectedMethod(targetMethod);
-    jmethodID hook = env->FromReflectedMethod(hookMethod);
-
-    if (target == nullptr || hook == nullptr) {
-        LOGE("Failed to get ArtMethod pointers");
-        return;
-    }
-
-    LOGD("Swapping ArtMethod: target=%p hook=%p size=%zu", target, hook, art_method_size);
-
-    // Full ArtMethod memcpy: copy hook's method data into target's slot
-    // After this, calls to the target method dispatch to hook's bytecode
-    memcpy(reinterpret_cast<void*>(target),
-           reinterpret_cast<void*>(hook),
-           art_method_size);
-}
-
-// JNI native methods to register on the loaded HookEntry class
-static JNINativeMethod hookEntryMethods[] = {
-    {"nativeHookMethod",
-     "(Ljava/lang/reflect/Method;Ljava/lang/reflect/Method;)V",
-     reinterpret_cast<void*>(nativeHookMethod)},
-};
-
-// =====================================================================
 // Companion process (runs as root)
 // =====================================================================
 
 /**
  * Read the DEX file from the module directory and send it to the module
  * process via the Unix socket.
- *
- * Protocol: [uint32_t size][uint8_t data[size]]
- * If the file doesn't exist, sends size=0.
  */
 static void companion_handler(int fd) {
-    // Read the module directory path from the client (unused for now, use fixed path)
-    // Open DEX file
     const char *dex_path = "/data/adb/modules/zygisksim/classes.dex";
     int dex_fd = open(dex_path, O_RDONLY);
 
@@ -153,11 +75,6 @@ public:
     }
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
-        // Get app process name for logging
-        const char *process = env->GetStringUTFChars(args->nice_name, nullptr);
-        LOGD("preAppSpecialize: %s", process ? process : "unknown");
-        if (process) env->ReleaseStringUTFChars(args->nice_name, process);
-
         // Connect to root companion to fetch the DEX payload
         int companion_fd = api->connectCompanion();
         if (companion_fd < 0) {
@@ -174,7 +91,8 @@ public:
         }
 
         // Allocate and read DEX data
-        dex_data = new uint8_t[size];
+        // Using malloc instead of new[] to avoid C++ runtime issues with APP_STL=none/c++_static
+        dex_data = (uint8_t *)malloc(size);
         dex_size = size;
 
         uint32_t received = 0;
@@ -188,7 +106,7 @@ public:
 
         if (received != size) {
             LOGE("Incomplete DEX read: got %u of %u bytes", received, size);
-            delete[] dex_data;
+            free(dex_data);
             dex_data = nullptr;
             dex_size = 0;
         } else {
@@ -256,24 +174,7 @@ public:
 
         LOGI("HookEntry class loaded successfully");
 
-        // 5. Calculate ArtMethod size using helper methods in HookEntry
-        calculateArtMethodSize(env, hook_class);
-
-        // 6. Register native methods on HookEntry
-        jint reg_result = env->RegisterNatives(
-            hook_class, hookEntryMethods,
-            sizeof(hookEntryMethods) / sizeof(hookEntryMethods[0]));
-
-        if (reg_result != JNI_OK) {
-            LOGE("Failed to register native methods (result=%d)", reg_result);
-            if (env->ExceptionCheck()) {
-                env->ExceptionDescribe();
-                env->ExceptionClear();
-            }
-            return;
-        }
-
-        // 7. Call HookEntry.init(logDir) to set up hooks
+        // 5. Call HookEntry.init(logDir) to set up hooks
         jmethodID init_method = env->GetStaticMethodID(
             hook_class, "init", "(Ljava/lang/String;)V");
         jstring log_dir = env->NewStringUTF("/data/adb/modules/zygisksim/logs");
