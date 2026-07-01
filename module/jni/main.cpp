@@ -241,7 +241,9 @@ public:
         // ----------------------------------------------------------
         char pine_path[512] = {};
         if (pine_data != nullptr && pine_size > 0 && app_data_dir[0] != '\0') {
-            // Create cache dir if needed
+            // Recursively ensure app data dir and cache dir exist
+            // On first launch in work profiles, app_data_dir may not exist yet
+            mkdir(app_data_dir, 0755);
             char cache_dir[512];
             snprintf(cache_dir, sizeof(cache_dir), "%s/cache", app_data_dir);
             mkdir(cache_dir, 0755);
@@ -329,6 +331,8 @@ public:
 
         // ----------------------------------------------------------
         // Step 4: Call HookEntry.init(logDir, pineLibPath, configJson)
+        //         Wrapped so any Java exception is caught and cleared,
+        //         preventing a crash in the host app.
         // ----------------------------------------------------------
         char log_dir[512];
         if (app_data_dir[0] != '\0') {
@@ -340,6 +344,14 @@ public:
         jmethodID init_method = env->GetStaticMethodID(
             hook_class, "init",
             "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+
+        if (init_method == nullptr) {
+            LOGE("Failed to find HookEntry.init method");
+            if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+            if (config_data) { free(config_data); config_data = nullptr; }
+            return;
+        }
+
         jstring j_log_dir = env->NewStringUTF(log_dir);
         jstring j_pine_path = env->NewStringUTF(pine_path);
         jstring j_config = env->NewStringUTF(
@@ -349,7 +361,7 @@ public:
             j_log_dir, j_pine_path, j_config);
 
         if (env->ExceptionCheck()) {
-            LOGE("Exception during HookEntry.init()");
+            LOGE("Exception during HookEntry.init() — clearing to prevent app crash");
             env->ExceptionDescribe();
             env->ExceptionClear();
         } else {
