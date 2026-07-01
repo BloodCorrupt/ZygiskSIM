@@ -133,6 +133,9 @@ public class HookEntry {
         try { hookEuiccManagerGetEid(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerGetEid failed: " + t.getMessage());
         }
+        try { hookEuiccManagerGetEuiccInfo(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerGetEuiccInfo failed: " + t.getMessage());
+        }
         try { hookPackageManagerHasSystemFeature(); } catch (Throwable t) {
             logStatic("  WARN: hookPackageManagerHasSystemFeature failed: " + t.getMessage());
         }
@@ -228,6 +231,34 @@ public class HookEntry {
             logStatic("  Pine initialized with custom lib loader");
         } catch (Throwable t) {
             logStatic("  Warning: Pine custom loader setup failed: " + t.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // Hook: EuiccManager.getEuiccInfo() → mock object
+    // =========================================================================
+
+    private static void hookEuiccManagerGetEuiccInfo() {
+        try {
+            Method getEuiccInfo = EuiccManager.class.getDeclaredMethod("getEuiccInfo");
+            Pine.hook(getEuiccInfo, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    try {
+                        Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo");
+                        Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
+                        constructor.setAccessible(true);
+                        Object mockInfo = constructor.newInstance("1.0");
+                        callFrame.setResult(mockInfo);
+                    } catch (Exception e) {
+                        callFrame.setResult(null);
+                    }
+                }
+            });
+            logStatic("  Hooked EuiccManager.getEuiccInfo()");
+        } catch (Throwable t) {
+            // Method might not exist on older API levels
+            logStatic("  EuiccManager.getEuiccInfo() not available on this API level");
         }
     }
 
