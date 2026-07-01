@@ -35,6 +35,9 @@ public class HookEntry {
             injectBinderProxy();
             logStatic("Binder proxy successfully injected for 'euicc' service.");
 
+            injectPackageManagerProxy();
+            logStatic("IPackageManager proxy successfully injected.");
+
         } catch (Throwable t) {
             logStatic("Hook initialization failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
@@ -126,6 +129,58 @@ public class HookEntry {
         
         Map<String, Object> cache = (Map<String, Object>) cacheField.get(null);
         cache.put("euicc", binderProxy);
+    }
+
+    /**
+     * Injects a proxy for IPackageManager to spoof the eSIM system feature.
+     * KernelSU ignores system overlays without metamodules, so we spoof it in Java.
+     */
+    private static void injectPackageManagerProxy() throws Exception {
+        ClassLoader cl = ClassLoader.getSystemClassLoader();
+        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+        
+        // ActivityThread.sPackageManager is a static field holding the IPackageManager singleton
+        Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+        sPackageManagerField.setAccessible(true);
+        Object originalPackageManager = sPackageManagerField.get(null);
+
+        if (originalPackageManager == null) {
+            // If it's null, we have to fetch it first so we can wrap it
+            Method getPackageManagerMethod = activityThreadClass.getDeclaredMethod("getPackageManager");
+            getPackageManagerMethod.setAccessible(true);
+            originalPackageManager = getPackageManagerMethod.invoke(null);
+        }
+
+        if (originalPackageManager == null) {
+            logStatic("Could not get original IPackageManager.");
+            return;
+        }
+
+        Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+
+        final Object finalOriginalPm = originalPackageManager;
+        Object pmProxy = Proxy.newProxyInstance(
+                cl,
+                new Class<?>[]{iPackageManagerClass},
+                new InvocationHandler() {
+                    @Override
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                        if ("hasSystemFeature".equals(method.getName())) {
+                            if (args != null && args.length > 0 && "android.hardware.telephony.euicc".equals(args[0])) {
+                                logStatic("Spoofed hasSystemFeature for android.hardware.telephony.euicc");
+                                return true;
+                            }
+                        }
+                        try {
+                            return method.invoke(finalOriginalPm, args);
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            throw e.getTargetException(); // Unwrap exception to prevent crashes
+                        }
+                    }
+                }
+        );
+
+        sPackageManagerField.set(null, pmProxy);
     }
 
     /**
