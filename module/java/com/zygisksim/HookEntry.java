@@ -129,12 +129,11 @@ public class HookEntry {
     // Mock EuiccService (to spoof EID, download, and EuiccInfo)
     // =========================================================================
 
-    @SuppressWarnings("unchecked")
-    private static void mockEuiccService() {
+    private static Object createMockController(final ClassLoader classLoader) {
         try {
-            Class<?> iEuiccControllerClass = Class.forName("android.telephony.euicc.IEuiccController");
-            final Object mockController = Proxy.newProxyInstance(
-                    iEuiccControllerClass.getClassLoader(),
+            Class<?> iEuiccControllerClass = Class.forName("android.telephony.euicc.IEuiccController", true, classLoader);
+            return Proxy.newProxyInstance(
+                    classLoader,
                     new Class<?>[]{iEuiccControllerClass},
                     new InvocationHandler() {
                         @Override
@@ -146,7 +145,7 @@ public class HookEntry {
                             }
                             
                             if ("getEuiccInfo".equals(name)) {
-                                Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo");
+                                Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo", true, classLoader);
                                 Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
                                 constructor.setAccessible(true);
                                 return constructor.newInstance("1.0");
@@ -209,17 +208,42 @@ public class HookEntry {
                         }
                     }
             );
+        } catch (Throwable t) {
+            logStatic("Failed to create lazy mock IEuiccController: " + t.getMessage());
+            logStackTrace(t);
+            return null;
+        }
+    }
 
+    @SuppressWarnings("unchecked")
+    private static void mockEuiccService() {
+        try {
             Class<?> iBinderClass = Class.forName("android.os.IBinder");
             IBinder mockBinder = (IBinder) Proxy.newProxyInstance(
                     iBinderClass.getClassLoader(),
                     new Class<?>[]{iBinderClass},
                     new InvocationHandler() {
+                        private Object mMockController = null;
+
                         @Override
                         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                             String name = method.getName();
                             if ("queryLocalInterface".equals(name)) {
-                                return mockController;
+                                if (mMockController == null) {
+                                    ClassLoader classLoader = null;
+                                    Application app = getApplication();
+                                    if (app != null) {
+                                        classLoader = app.getClassLoader();
+                                    }
+                                    if (classLoader == null) {
+                                        classLoader = Thread.currentThread().getContextClassLoader();
+                                    }
+                                    if (classLoader == null) {
+                                        classLoader = ClassLoader.getSystemClassLoader();
+                                    }
+                                    mMockController = createMockController(classLoader);
+                                }
+                                return mMockController;
                             }
                             if ("pingBinder".equals(name) || "isBinderAlive".equals(name)) {
                                 return true;
@@ -244,12 +268,12 @@ public class HookEntry {
             
             if (cache != null) {
                 cache.put("econtroller", mockBinder);
-                logStatic("Injected mock IEuiccController into ServiceManager cache.");
+                logStatic("Injected mock IEuiccController binder into ServiceManager cache.");
             } else {
                 logStatic("ServiceManager.sCache is null! Cannot inject econtroller.");
             }
         } catch (Throwable t) {
-            logStatic("Failed to mock IEuiccController: " + t.getMessage());
+            logStatic("Failed to mock IEuiccController binder: " + t.getMessage());
             logStackTrace(t);
         }
     }
