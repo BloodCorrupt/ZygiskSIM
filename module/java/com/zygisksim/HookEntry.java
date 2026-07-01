@@ -20,6 +20,9 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import top.canyie.pine.Pine;
 import top.canyie.pine.callback.MethodHook;
 
@@ -39,48 +42,67 @@ public class HookEntry {
     private static String sLogDir;
     private static Application sApplication;
 
-    /**
-     * Fake EID (Embedded Identity Document) - 32-digit hex string.
-     * This follows the standard EID format (89 prefix for eUICC).
-     * It won't enable real eSIM downloads, but makes detection checks pass.
-     */
-    private static final String FAKE_EID = "89049032000000000000000000000001";
+    // Config-driven values (populated from config.json or defaults)
+    private static String sEid = "89049032000000000000000000000001";
+    private static String sSpoofModel = "Pixel 8";
+    private static String sSpoofDevice = "shiba";
+    private static String sSpoofManufacturer = "Google";
+    private static String sSpoofBrand = "google";
+    private static String sSpoofProduct = "shiba";
 
-    /**
-     * Spoofed Build fields — Google Pixel 8 (known eSIM-capable device).
-     * Many eSIM apps check Build.MODEL against a whitelist of supported devices.
-     * These are only applied inside the target app's process, not system-wide.
-     */
-    private static final String SPOOF_MODEL = "Pixel 8";
-    private static final String SPOOF_DEVICE = "shiba";
-    private static final String SPOOF_MANUFACTURER = "Google";
-    private static final String SPOOF_BRAND = "google";
-    private static final String SPOOF_PRODUCT = "shiba";
-
-    /** Map of system property names to spoofed values */
+    /** Map of system property names to spoofed values (rebuilt from config) */
     private static final Map<String, String> SPOOFED_PROPS = new HashMap<>();
-    static {
-        SPOOFED_PROPS.put("ro.product.model", SPOOF_MODEL);
-        SPOOFED_PROPS.put("ro.product.device", SPOOF_DEVICE);
-        SPOOFED_PROPS.put("ro.product.manufacturer", SPOOF_MANUFACTURER);
-        SPOOFED_PROPS.put("ro.product.brand", SPOOF_BRAND);
-        SPOOFED_PROPS.put("ro.product.name", SPOOF_PRODUCT);
-        // Vendor-specific overrides (some apps read these variants)
-        SPOOFED_PROPS.put("ro.product.vendor.model", SPOOF_MODEL);
-        SPOOFED_PROPS.put("ro.product.vendor.device", SPOOF_DEVICE);
-        SPOOFED_PROPS.put("ro.product.vendor.manufacturer", SPOOF_MANUFACTURER);
-        SPOOFED_PROPS.put("ro.product.vendor.brand", SPOOF_BRAND);
-        SPOOFED_PROPS.put("ro.product.vendor.name", SPOOF_PRODUCT);
-        SPOOFED_PROPS.put("ro.product.system.model", SPOOF_MODEL);
-        SPOOFED_PROPS.put("ro.product.system.device", SPOOF_DEVICE);
-        SPOOFED_PROPS.put("ro.product.system.manufacturer", SPOOF_MANUFACTURER);
-        SPOOFED_PROPS.put("ro.product.system.brand", SPOOF_BRAND);
+
+    private static void buildSpoofedProps() {
+        SPOOFED_PROPS.clear();
+        String[][] prefixes = {
+            {"ro.product.", ""},
+            {"ro.product.vendor.", ""},
+            {"ro.product.system.", ""},
+        };
+        for (String[] p : prefixes) {
+            String pfx = p[0];
+            SPOOFED_PROPS.put(pfx + "model", sSpoofModel);
+            SPOOFED_PROPS.put(pfx + "device", sSpoofDevice);
+            SPOOFED_PROPS.put(pfx + "manufacturer", sSpoofManufacturer);
+            SPOOFED_PROPS.put(pfx + "brand", sSpoofBrand);
+            SPOOFED_PROPS.put(pfx + "name", sSpoofProduct);
+        }
     }
 
-    public static void init(String logDir, String pineLibPath) {
+    private static void parseConfig(String jsonStr) {
+        if (jsonStr == null || jsonStr.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject config = new JSONObject(jsonStr);
+            if (config.has("eid")) {
+                sEid = config.getString("eid");
+            }
+            if (config.has("device")) {
+                JSONObject dev = config.getJSONObject("device");
+                sSpoofModel = dev.optString("model", sSpoofModel);
+                sSpoofDevice = dev.optString("device", sSpoofDevice);
+                sSpoofManufacturer = dev.optString("manufacturer", sSpoofManufacturer);
+                sSpoofBrand = dev.optString("brand", sSpoofBrand);
+                sSpoofProduct = dev.optString("product", sSpoofProduct);
+            }
+            logStatic("  Parsed config.json successfully.");
+            logStatic("  Config EID: " + sEid);
+            logStatic("  Config Device: " + sSpoofModel + " (" + sSpoofDevice + ")");
+        } catch (Throwable t) {
+            logStatic("  Failed to parse config.json, using defaults. Error: " + t.getMessage());
+        }
+    }
+
+    public static void init(String logDir, String pineLibPath, String configJson) {
         sLogDir = logDir;
         logStatic("ZygiskSIM Java payload initializing (Pine)...");
         logStatic("  Pine library path from native: " + pineLibPath);
+
+        // Parse config.json if provided
+        parseConfig(configJson);
+        buildSpoofedProps();
 
         try {
             loadPineLibrary(pineLibPath);
@@ -230,8 +252,8 @@ public class HookEntry {
             Pine.hook(getEid, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
-                    logStatic("Spoofed EuiccManager.getEid() -> " + FAKE_EID);
-                    callFrame.setResult(FAKE_EID);
+                    logStatic("Spoofed EuiccManager.getEid() -> " + sEid);
+                    callFrame.setResult(sEid);
                 }
             });
             logStatic("  Hooked EuiccManager.getEid()");
@@ -299,13 +321,13 @@ public class HookEntry {
     private static void spoofBuildFields() {
         try {
             Class<?> buildClass = android.os.Build.class;
-            setStaticField(buildClass, "MODEL", SPOOF_MODEL);
-            setStaticField(buildClass, "DEVICE", SPOOF_DEVICE);
-            setStaticField(buildClass, "MANUFACTURER", SPOOF_MANUFACTURER);
-            setStaticField(buildClass, "BRAND", SPOOF_BRAND);
-            setStaticField(buildClass, "PRODUCT", SPOOF_PRODUCT);
-            logStatic("  Spoofed Build fields: MODEL=" + SPOOF_MODEL + ", DEVICE=" + SPOOF_DEVICE
-                    + ", MANUFACTURER=" + SPOOF_MANUFACTURER + ", BRAND=" + SPOOF_BRAND);
+            setStaticField(buildClass, "MODEL", sSpoofModel);
+            setStaticField(buildClass, "DEVICE", sSpoofDevice);
+            setStaticField(buildClass, "MANUFACTURER", sSpoofManufacturer);
+            setStaticField(buildClass, "BRAND", sSpoofBrand);
+            setStaticField(buildClass, "PRODUCT", sSpoofProduct);
+            logStatic("  Spoofed Build fields: MODEL=" + sSpoofModel + ", DEVICE=" + sSpoofDevice
+                    + ", MANUFACTURER=" + sSpoofManufacturer + ", BRAND=" + sSpoofBrand);
         } catch (Throwable t) {
             logStatic("  Failed to spoof Build fields: " + t.getMessage());
         }

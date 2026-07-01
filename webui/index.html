@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZygiskSIM — Device Persona & EID Config</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #111827;
+  --bg-card: #1a2235;
+  --bg-card-hover: #1f2a42;
+  --bg-input: #0f172a;
+  --border: #2d3a52;
+  --border-active: #3b82f6;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.3);
+  --accent-hover: #2563eb;
+  --green: #10b981;
+  --green-glow: rgba(16, 185, 129, 0.3);
+  --orange: #f59e0b;
+  --red: #ef4444;
+  --purple: #8b5cf6;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 2rem 1.5rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.header::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 30% 50%, rgba(59,130,246,0.08) 0%, transparent 50%),
+              radial-gradient(circle at 70% 50%, rgba(139,92,246,0.06) 0%, transparent 50%);
+  animation: headerGlow 8s ease-in-out infinite alternate;
+}
+@keyframes headerGlow {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(-2%, 2%); }
+}
+.header h1 {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  position: relative;
+  background: linear-gradient(135deg, #f1f5f9, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  position: relative;
+}
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 0.75rem;
+  position: relative;
+}
+.badge-blue { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+
+/* Container */
+.container {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* Section */
+.section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+  transition: border-color 0.2s;
+}
+.section:hover { border-color: rgba(59,130,246,0.3); }
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.section-title .icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+}
+.icon-blue { background: rgba(59,130,246,0.2); color: #60a5fa; }
+.icon-green { background: rgba(16,185,129,0.2); color: #34d399; }
+.icon-purple { background: rgba(139,92,246,0.2); color: #a78bfa; }
+.icon-orange { background: rgba(245,158,11,0.2); color: #fbbf24; }
+
+/* Device Grid */
+.device-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+@media (max-width: 500px) { .device-grid { grid-template-columns: 1fr; } }
+
+.device-card {
+  background: var(--bg-input);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.875rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+.device-card:hover {
+  border-color: rgba(59,130,246,0.4);
+  background: var(--bg-card-hover);
+}
+.device-card.selected {
+  border-color: var(--accent);
+  background: rgba(59,130,246,0.08);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 20px var(--accent-glow);
+}
+.device-card.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: white;
+}
+.device-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.15rem;
+}
+.device-model {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.brand-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  margin-bottom: 0.35rem;
+}
+.brand-google { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.brand-samsung { background: rgba(139,92,246,0.15); color: #a78bfa; }
+.brand-oneplus { background: rgba(239,68,68,0.15); color: #f87171; }
+.brand-xiaomi { background: rgba(245,158,11,0.15); color: #fbbf24; }
+.brand-sony { background: rgba(16,185,129,0.15); color: #34d399; }
+.brand-motorola { background: rgba(6,182,212,0.15); color: #22d3ee; }
+.brand-nothing { background: rgba(248,250,252,0.1); color: #cbd5e1; }
+.brand-oppo { background: rgba(34,197,94,0.15); color: #4ade80; }
+
+/* EID Section */
+.eid-display {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  color: var(--green);
+  text-align: center;
+  word-break: break-all;
+  transition: all 0.2s;
+  position: relative;
+}
+.eid-display.flash {
+  box-shadow: 0 0 20px var(--green-glow);
+  border-color: var(--green);
+}
+.eid-prefix { color: var(--text-muted); }
+
+/* Buttons */
+.btn-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.btn {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 20px var(--accent-glow); }
+.btn-secondary {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { border-color: var(--text-muted); color: var(--text-primary); }
+.btn-green {
+  background: var(--green);
+  color: white;
+}
+.btn-green:hover { background: #059669; box-shadow: 0 0 20px var(--green-glow); }
+.btn-full { flex: none; width: 100%; }
+
+/* Target Apps */
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.target-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+}
+.target-item input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  outline: none;
+}
+.target-item input::placeholder { color: var(--text-muted); }
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.2rem;
+  border-radius: 4px;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+}
+.btn-icon:hover { color: var(--red); background: rgba(239,68,68,0.1); }
+.btn-icon.add:hover { color: var(--green); background: rgba(16,185,129,0.1); }
+
+/* Preview */
+.preview-block {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.preview-block .key { color: #60a5fa; }
+.preview-block .str { color: #34d399; }
+.preview-block .punct { color: var(--text-muted); }
+
+/* Footer action */
+.footer-action {
+  margin-top: 0.5rem;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: var(--bg-card);
+  border: 1px solid var(--green);
+  color: var(--text-primary);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 500;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.4), 0 0 20px var(--green-glow);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 999;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ADB command */
+.adb-cmd {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  color: var(--orange);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.adb-cmd code { flex: 1; overflow-x: auto; white-space: nowrap; }
+.adb-cmd .copy-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.adb-cmd .copy-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚡ ZygiskSIM Config</h1>
+  <p>Device Persona Generator & EID Randomizer</p>
+  <div class="badge badge-blue">NeoZygisk + KSU Compatible</div>
+</div>
+
+<div class="container">
+
+  <!-- Device Persona -->
+  <div class="section">
+    <div class="section-title"><span class="icon icon-blue">📱</span> Device Persona</div>
+    <div class="device-grid" id="deviceGrid"></div>
+  </div>
+
+  <!-- EID -->
+  <div class="section">
+    <div class="section-title"><span class="icon icon-green">🔑</span> EID (Embedded Identity Document)</div>
+    <div class="eid-display" id="eidDisplay"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="randomizeEid()">🎲 Randomize</button>
+      <button class="btn btn-secondary" onclick="copyEid()">📋 Copy</button>
+    </div>
+  </div>
+
+  <!-- Target Apps -->
+  <div class="section">
+    <div class="section-title"><span class="icon icon-purple">🎯</span> Target Apps</div>
+    <div class="target-list" id="targetList"></div>
+    <div class="btn-row" style="margin-top:0.5rem;">
+      <button class="btn btn-secondary" onclick="addTarget()">+ Add App</button>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="section">
+    <div class="section-title"><span class="icon icon-orange">📄</span> Config Preview</div>
+    <div class="preview-block" id="preview"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="footer-action">
+    <button class="btn btn-green btn-full" onclick="downloadConfig()" style="padding:0.85rem;">
+      ⬇ Download config.json
+    </button>
+    <div class="adb-cmd">
+      <code>adb push config.json /data/adb/modules/zygisksim/</code>
+      <button class="copy-btn" onclick="copyAdb()">Copy</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// =====================================================================
+// Device Persona Database
+// =====================================================================
+const DEVICES = [
+  { name: "Google Pixel 9 Pro", model: "Pixel 9 Pro", device: "caiman", manufacturer: "Google", brand: "google", product: "caiman" },
+  { name: "Google Pixel 9", model: "Pixel 9", device: "tokay", manufacturer: "Google", brand: "google", product: "tokay" },
+  { name: "Google Pixel 8 Pro", model: "Pixel 8 Pro", device: "husky", manufacturer: "Google", brand: "google", product: "husky" },
+  { name: "Google Pixel 8", model: "Pixel 8", device: "shiba", manufacturer: "Google", brand: "google", product: "shiba" },
+  { name: "Google Pixel 7 Pro", model: "Pixel 7 Pro", device: "cheetah", manufacturer: "Google", brand: "google", product: "cheetah" },
+  { name: "Google Pixel 7", model: "Pixel 7", device: "panther", manufacturer: "Google", brand: "google", product: "panther" },
+  { name: "Samsung Galaxy S25 Ultra", model: "SM-S938B", device: "e3q", manufacturer: "samsung", brand: "samsung", product: "e3qxxx" },
+  { name: "Samsung Galaxy S24 Ultra", model: "SM-S928B", device: "e2s", manufacturer: "samsung", brand: "samsung", product: "e2sxxx" },
+  { name: "Samsung Galaxy S24", model: "SM-S921B", device: "e1s", manufacturer: "samsung", brand: "samsung", product: "e1sxxx" },
+  { name: "Samsung Galaxy S23 Ultra", model: "SM-S918B", device: "dm3q", manufacturer: "samsung", brand: "samsung", product: "dm3qxxx" },
+  { name: "Samsung Galaxy Z Fold5", model: "SM-F946B", device: "q5q", manufacturer: "samsung", brand: "samsung", product: "q5qxxx" },
+  { name: "Samsung Galaxy Z Flip5", model: "SM-F731B", device: "b5q", manufacturer: "samsung", brand: "samsung", product: "b5qxxx" },
+  { name: "OnePlus 12", model: "CPH2583", device: "waffle", manufacturer: "OnePlus", brand: "OnePlus", product: "CPH2583" },
+  { name: "Xiaomi 14", model: "23127PN0CC", device: "houji", manufacturer: "Xiaomi", brand: "Xiaomi", product: "houji" },
+  { name: "Sony Xperia 1 V", model: "XQ-DQ72", device: "pdx234", manufacturer: "Sony", brand: "Sony", product: "pdx234" },
+  { name: "Motorola Edge 40 Pro", model: "XT2301-4", device: "rtwo", manufacturer: "motorola", brand: "motorola", product: "rtwo_g" },
+  { name: "Nothing Phone (2)", model: "A065", device: "Pong", manufacturer: "Nothing", brand: "Nothing", product: "Pong" },
+  { name: "OPPO Find X7 Ultra", model: "PHZ110", device: "aston", manufacturer: "OPPO", brand: "OPPO", product: "PHZ110" },
+];
+
+const DEFAULT_TARGETS = [
+  "travel.eskimo.esim",
+  "com.wonet.usims",
+  "com.airalo.android",
+  "com.trustroam",
+  "com.nomad.app",
+  "com.holafly.android",
+  "com.samsung.android.euicc",
+];
+
+// =====================================================================
+// State
+// =====================================================================
+let selectedDevice = DEVICES[3]; // Pixel 8 default
+let currentEid = generateEid();
+let targets = [...DEFAULT_TARGETS];
+
+// =====================================================================
+// EID Generator
+// =====================================================================
+function generateEid() {
+  // EID format: 89 (eUICC) + 049 (GSMA) + 032 (platform) + 21 random digits + 2 check
+  let eid = "89049032";
+  for (let i = 0; i < 22; i++) {
+    eid += Math.floor(Math.random() * 10).toString();
+  }
+  // Simple Luhn-ish check digit (last 2 digits)
+  let sum = 0;
+  for (let i = 0; i < 30; i++) {
+    let d = parseInt(eid[i]);
+    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  let check = (10 - (sum % 10)) % 10;
+  eid = eid.substring(0, 30) + check.toString() + Math.floor(Math.random() * 10).toString();
+  return eid;
+}
+
+function randomizeEid() {
+  currentEid = generateEid();
+  renderEid();
+  updatePreview();
+  const el = document.getElementById('eidDisplay');
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 400);
+}
+
+function copyEid() {
+  navigator.clipboard.writeText(currentEid);
+  showToast("EID copied to clipboard");
+}
+
+// =====================================================================
+// Rendering
+// =====================================================================
+function getBrandClass(manufacturer) {
+  const m = manufacturer.toLowerCase();
+  if (m === 'google') return 'brand-google';
+  if (m === 'samsung') return 'brand-samsung';
+  if (m === 'oneplus') return 'brand-oneplus';
+  if (m === 'xiaomi') return 'brand-xiaomi';
+  if (m === 'sony') return 'brand-sony';
+  if (m === 'motorola') return 'brand-motorola';
+  if (m === 'nothing') return 'brand-nothing';
+  if (m === 'oppo') return 'brand-oppo';
+  return 'brand-google';
+}
+
+function renderDevices() {
+  const grid = document.getElementById('deviceGrid');
+  grid.innerHTML = DEVICES.map((d, i) => `
+    <div class="device-card ${d === selectedDevice ? 'selected' : ''}" onclick="selectDevice(${i})">
+      <div class="brand-tag ${getBrandClass(d.manufacturer)}">${d.manufacturer}</div>
+      <div class="device-name">${d.name.replace(d.manufacturer + ' ', '').replace('Google ', '')}</div>
+      <div class="device-model">${d.model} / ${d.device}</div>
+    </div>
+  `).join('');
+}
+
+function renderEid() {
+  const el = document.getElementById('eidDisplay');
+  const prefix = currentEid.substring(0, 8);
+  const rest = currentEid.substring(8);
+  // Format in groups of 4 for readability
+  let formatted = '';
+  for (let i = 0; i < rest.length; i += 4) {
+    formatted += rest.substring(i, i + 4) + ' ';
+  }
+  el.innerHTML = `<span class="eid-prefix">${prefix}</span> ${formatted.trim()}`;
+}
+
+function renderTargets() {
+  const list = document.getElementById('targetList');
+  list.innerHTML = targets.map((t, i) => `
+    <div class="target-item">
+      <input type="text" value="${t}" onchange="updateTarget(${i}, this.value)" placeholder="com.example.app">
+      <button class="btn-icon" onclick="removeTarget(${i})" title="Remove">✕</button>
+    </div>
+  `).join('');
+}
+
+function selectDevice(index) {
+  selectedDevice = DEVICES[index];
+  renderDevices();
+  updatePreview();
+}
+
+function addTarget() {
+  targets.push('');
+  renderTargets();
+  updatePreview();
+  // Focus the new input
+  const inputs = document.querySelectorAll('.target-item input');
+  if (inputs.length > 0) inputs[inputs.length - 1].focus();
+}
+
+function removeTarget(index) {
+  targets.splice(index, 1);
+  renderTargets();
+  updatePreview();
+}
+
+function updateTarget(index, value) {
+  targets[index] = value.trim();
+  updatePreview();
+}
+
+// =====================================================================
+// Config Generation
+// =====================================================================
+function buildConfig() {
+  return {
+    device: {
+      model: selectedDevice.model,
+      device: selectedDevice.device,
+      manufacturer: selectedDevice.manufacturer,
+      brand: selectedDevice.brand,
+      product: selectedDevice.product
+    },
+    eid: currentEid,
+    targets: targets.filter(t => t.length > 0)
+  };
+}
+
+function updatePreview() {
+  const config = buildConfig();
+  const json = JSON.stringify(config, null, 2);
+  // Syntax highlight
+  const highlighted = json
+    .replace(/"([^"]+)":/g, '<span class="key">"$1"</span><span class="punct">:</span>')
+    .replace(/: "([^"]+)"/g, ': <span class="str">"$1"</span>')
+    .replace(/[{}\[\],]/g, '<span class="punct">$&</span>');
+  document.getElementById('preview').innerHTML = highlighted;
+}
+
+function downloadConfig() {
+  const config = buildConfig();
+  const json = JSON.stringify(config, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'config.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast("✓ config.json downloaded");
+}
+
+function copyAdb() {
+  navigator.clipboard.writeText('adb push config.json /data/adb/modules/zygisksim/');
+  showToast("ADB command copied");
+}
+
+// =====================================================================
+// Toast
+// =====================================================================
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+renderDevices();
+renderEid();
+renderTargets();
+updatePreview();
+</script>
+</body>
+</html>

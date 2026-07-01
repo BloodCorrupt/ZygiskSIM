@@ -31,12 +31,12 @@
 
 static const char *TARGET_PACKAGES[] = {
     "travel.eskimo.esim",           // Eskimo eSIM
+    "com.wonet.usims",              // USIMs
     "com.airalo.android",           // Airalo eSIM
     "com.trustroam",                // Trustroam eSIM
     "com.nomad.app",                // Nomad eSIM
     "com.holafly.android",          // Holafly eSIM
     "com.samsung.android.euicc",    // Samsung eSIM manager
-    "com.android.phone",            // System phone/telephony process
     nullptr  // sentinel
 };
 
@@ -119,12 +119,14 @@ static void companion_handler(int fd) {
     send_file(fd, "/data/adb/modules/zygisksim/classes.dex");
 
     // 2. Send libpine.so for the matching ABI
-    //    Companion process is ABI-aware: 64-bit process gets 64-bit companion
 #if defined(__LP64__)
     send_file(fd, "/data/adb/modules/zygisksim/system/lib64/libpine.so");
 #else
     send_file(fd, "/data/adb/modules/zygisksim/system/lib/libpine.so");
 #endif
+
+    // 3. Send config.json (optional — size=0 if not present)
+    send_file(fd, "/data/adb/modules/zygisksim/config.json");
 }
 
 // =====================================================================
@@ -208,6 +210,21 @@ public:
             return;
         }
         LOGI("Pine library received: %u bytes", pine_sz);
+
+        // --- Read config.json payload (optional) ---
+        uint32_t cfg_sz = 0;
+        if (read_exact(companion_fd, &cfg_sz, sizeof(cfg_sz)) && cfg_sz > 0) {
+            config_data = (uint8_t *)malloc(cfg_sz + 1);
+            config_size = cfg_sz;
+            if (read_exact(companion_fd, config_data, cfg_sz)) {
+                config_data[cfg_sz] = '\0'; // null-terminate
+                LOGI("Config received: %u bytes", cfg_sz);
+            } else {
+                free(config_data); config_data = nullptr; config_size = 0;
+            }
+        } else {
+            LOGD("No config.json found (using defaults)");
+        }
 
         close(companion_fd);
     }
@@ -296,7 +313,7 @@ public:
         LOGI("HookEntry class loaded successfully");
 
         // ----------------------------------------------------------
-        // Step 4: Call HookEntry.init(logDir, pineLibPath)
+        // Step 4: Call HookEntry.init(logDir, pineLibPath, configJson)
         // ----------------------------------------------------------
         char log_dir[512];
         if (app_data_dir[0] != '\0') {
@@ -306,11 +323,15 @@ public:
         }
 
         jmethodID init_method = env->GetStaticMethodID(
-            hook_class, "init", "(Ljava/lang/String;Ljava/lang/String;)V");
+            hook_class, "init",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
         jstring j_log_dir = env->NewStringUTF(log_dir);
         jstring j_pine_path = env->NewStringUTF(pine_path);
+        jstring j_config = env->NewStringUTF(
+            config_data != nullptr ? (const char *)config_data : "");
 
-        env->CallStaticVoidMethod(hook_class, init_method, j_log_dir, j_pine_path);
+        env->CallStaticVoidMethod(hook_class, init_method,
+            j_log_dir, j_pine_path, j_config);
 
         if (env->ExceptionCheck()) {
             LOGE("Exception during HookEntry.init()");
@@ -319,6 +340,8 @@ public:
         } else {
             LOGI("Hook initialization complete for %s", package_name);
         }
+
+        if (config_data) { free(config_data); config_data = nullptr; }
     }
 
 private:
@@ -328,6 +351,8 @@ private:
     uint32_t dex_size = 0;
     uint8_t *pine_data = nullptr;
     uint32_t pine_size = 0;
+    uint8_t *config_data = nullptr;
+    uint32_t config_size = 0;
     char package_name[256] = {};
     char app_data_dir[512] = {};
 };
