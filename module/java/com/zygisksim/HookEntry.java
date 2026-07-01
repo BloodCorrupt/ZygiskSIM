@@ -21,6 +21,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import top.canyie.pine.Pine;
+import top.canyie.pine.PineConfig;
 import top.canyie.pine.callback.MethodHook;
 
 /**
@@ -102,12 +103,13 @@ public class HookEntry {
         }
     }
 
-    private static void loadPineLibrary(String pineLibPath) throws Exception {
+    private static void loadPineLibrary(final String pineLibPath) throws Exception {
         // Strategy 1: Load from the path provided by native companion (most reliable)
         if (pineLibPath != null && !pineLibPath.isEmpty()) {
             try {
                 System.load(pineLibPath);
                 logStatic("Successfully loaded libpine.so from companion path: " + pineLibPath);
+                configurePineLoader(pineLibPath);
                 return;
             } catch (UnsatisfiedLinkError e) {
                 logStatic("Companion path load failed: " + e.getMessage());
@@ -132,6 +134,7 @@ public class HookEntry {
             try {
                 System.load(path);
                 logStatic("Successfully loaded Pine from fallback: " + path);
+                configurePineLoader(path);
                 return;
             } catch (UnsatisfiedLinkError e) {
                 logStatic("Fallback load failed for " + path + ": " + e.getMessage());
@@ -139,6 +142,30 @@ public class HookEntry {
         }
 
         throw new Exception("Failed to load libpine.so from any path");
+    }
+
+    /**
+     * Override Pine's internal library loader so it doesn't try
+     * System.loadLibrary("pine") again (which fails under NeoZygisk).
+     * The native library is already loaded via System.load(), so the
+     * custom loader just calls System.load() with the same path.
+     */
+    private static void configurePineLoader(final String loadedPath) {
+        try {
+            PineConfig.libLoader = new PineConfig.LibLoader() {
+                @Override
+                public void loadLib() {
+                    // Library is already loaded, but Pine wants this callback
+                    // to succeed without throwing. Re-loading the same .so is a no-op.
+                    System.load(loadedPath);
+                }
+            };
+            // Force Pine to initialize NOW with our custom loader
+            Pine.ensureInitialized();
+            logStatic("  Pine initialized with custom lib loader");
+        } catch (Throwable t) {
+            logStatic("  Warning: Pine custom loader setup failed: " + t.getMessage());
+        }
     }
 
     // =========================================================================
