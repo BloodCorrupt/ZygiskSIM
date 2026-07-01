@@ -672,10 +672,47 @@ function showToast(msg) {
 // =====================================================================
 // Init
 // =====================================================================
-renderDevices();
-renderEid();
-renderTargets();
-updatePreview();
+async function init() {
+  await loadExistingConfig();
+  renderDevices();
+  renderEid();
+  renderTargets();
+  updatePreview();
+}
+
+async function loadExistingConfig() {
+  if (!window.ksu || typeof window.ksu.exec !== 'function') return;
+  try {
+    let response = "";
+    const cmd = "cat /data/adb/modules/zygisksim/config.json";
+    if (window.ksu.exec.constructor.name === 'AsyncFunction') {
+      response = await window.ksu.exec(cmd);
+    } else {
+      response = window.ksu.exec(cmd);
+    }
+    
+    if (response && response.includes('"eid"')) {
+      const config = JSON.parse(response);
+      if (config.eid) currentEid = config.eid;
+      if (config.targets && Array.isArray(config.targets)) targets = config.targets;
+      if (config.device && config.device.model) {
+        const found = DEVICES.find(d => d.model === config.device.model && d.device === config.device.device);
+        if (found) {
+          selectedDevice = found;
+        } else {
+          // Add custom device if not in list
+          const custom = { name: config.device.model, ...config.device };
+          DEVICES.unshift(custom);
+          selectedDevice = custom;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load existing config", e);
+  }
+}
+
+init();
 </script>
 </body>
 </html>
