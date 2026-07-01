@@ -624,11 +624,11 @@ async function applyKsuConfig() {
   const config = buildConfig();
   const json = JSON.stringify(config);
   
-  // Escape single quotes for safe shell embedding
-  const escaped = json.replace(/'/g, "'\\''");
+  // Base64 encode the JSON to avoid ANY shell escaping issues
+  const b64 = btoa(json);
   
-  // Write using printf piped to tee (no heredoc issues)
-  const cmd = "printf '%s' '" + escaped + "' > /data/adb/modules/zygisksim/config.json";
+  // Wrap in sh -c so the shell interprets the pipe and redirect correctly
+  const cmd = `sh -c "echo '${b64}' | base64 -d > /data/adb/modules/zygisksim/config.json"`;
   
   try {
     let response = "";

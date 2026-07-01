@@ -305,7 +305,6 @@ public class HookEntry {
                     if (featureName != null && featureName.startsWith("android.hardware.telephony.euicc")) {
                         Boolean originalResult = (Boolean) callFrame.getResult();
                         if (originalResult == null || !originalResult) {
-                            logStatic("Spoofed hasSystemFeature(\"" + featureName + "\") -> true (was " + originalResult + ")");
                             callFrame.setResult(true);
                         }
                     }
@@ -403,7 +402,6 @@ public class HookEntry {
                         String key = (String) callFrame.args[0];
                         if (key != null && SPOOFED_PROPS.containsKey(key)) {
                             String spoofed = SPOOFED_PROPS.get(key);
-                            logStatic("Spoofed SystemProperties.get(\"" + key + "\") -> " + spoofed);
                             callFrame.setResult(spoofed);
                         }
                     }
@@ -419,7 +417,6 @@ public class HookEntry {
                         String key = (String) callFrame.args[0];
                         if (key != null && SPOOFED_PROPS.containsKey(key)) {
                             String spoofed = SPOOFED_PROPS.get(key);
-                            logStatic("Spoofed SystemProperties.get(\"" + key + "\", ...) -> " + spoofed);
                             callFrame.setResult(spoofed);
                         }
                     }
