@@ -1,42 +1,40 @@
 package com.zygisksim;
 
 import android.app.Application;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.os.IBinder;
-import android.os.IInterface;
-
-import org.json.JSONObject;
+import android.telephony.euicc.DownloadableSubscription;
+import android.telephony.euicc.EuiccManager;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.Map;
+
+import org.json.JSONObject;
+
+import top.canyie.pine.Pine;
+import top.canyie.pine.callback.MethodHook;
 
 /**
  * Entry point for ZygiskSIM.
- * No longer uses Pine. Uses pure Java reflection and dynamic proxies to mock system services
- * because native inline hooking causes fatal SIGSEGV crashes on Android 15 ART.
+ * Reverted to Pine hooking framework. Uses dalvik.system.VMRuntime to bypass Hidden API policy
+ * and disables Pine's native hidden API bypass to prevent SIGSEGV native crashes on newer Android versions.
  */
 public class HookEntry {
 
-    // Pre-resolved binder methods to avoid classloader lookups inside the proxy's invoke()
-    private static Method sGetServiceMethod = null;
-    private static Method sAsInterfaceMethod = null;
+    private static String sLogDir = null;
+    private static Application sApplication = null;
 
     // Config defaults
-    private static String sLogDir = null;
     private static String sEid = "89049032005008882600033827513789";
     private static String sSpoofModel = "Pixel 8";
     private static String sSpoofDevice = "shiba";
@@ -46,283 +44,348 @@ public class HookEntry {
 
     public static void init(String logDir, String pineLibPath, String configJson) {
         sLogDir = logDir;
-        logStatic("ZygiskSIM Java payload initializing (Pure Reflection Mode)...");
+        logStatic("ZygiskSIM Java payload initializing (Pine Architecture)...");
 
-        // Parse config.json if provided
+        // 1. Parse config.json if provided
         parseConfig(configJson);
-        buildSpoofedProps();
 
-        // Pre-resolve ServiceManager.getService and IPackageManager.Stub.asInterface
-        try {
-            Class<?> serviceManagerClass = Class.forName("android.os.ServiceManager");
-            sGetServiceMethod = serviceManagerClass.getDeclaredMethod("getService", String.class);
-            sGetServiceMethod.setAccessible(true);
-
-            Class<?> iPmStubClass = Class.forName("android.content.pm.IPackageManager$Stub");
-            sAsInterfaceMethod = iPmStubClass.getDeclaredMethod("asInterface", IBinder.class);
-            sAsInterfaceMethod.setAccessible(true);
-            logStatic("Pre-resolved binder helper methods successfully.");
-        } catch (Throwable t) {
-            logStatic("Failed to pre-resolve binder helper methods: " + t.getMessage());
-        }
-
-        // 1. Spoof device identity
+        // 2. Spoof device identity (pure reflection)
         spoofBuildFields();
 
-        // 2. Mock IPackageManager in ActivityThread and disable PropertyInvalidatedCache
-        mockPackageManager();
+        // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime in Java
+        bypassHiddenApiRestrictions();
 
-        // 3. Mock IEuiccController in ServiceManager
-        mockEuiccService();
+        // 4. Disable Pine's native Hidden API bypass to prevent native SIGSEGV
+        disablePineNativeHiddenApiBypass();
 
-        logStatic("ZygiskSIM pure reflection hooks installed successfully!");
+        // 5. Load Pine library
+        try {
+            loadPineLibrary(pineLibPath);
+        } catch (Throwable t) {
+            logStatic("Pine library load FAILED — hooks will not be installed: " + t.getMessage());
+            logStackTrace(t);
+            return;
+        }
+
+        // 6. Install hooks immediately
+        installHooks();
     }
 
-    // =========================================================================
-    // PackageManager Mocking
-    // =========================================================================
-
-    private static void mockPackageManager() {
+    private static void bypassHiddenApiRestrictions() {
         try {
-            // Disable PropertyInvalidatedCache so that hasSystemFeature hits our proxy instead of the local cache
-            try {
-                Class<?> cacheClass = Class.forName("android.app.PropertyInvalidatedCache");
-                try {
-                    Method disable = cacheClass.getDeclaredMethod("disableForTestMode");
-                    disable.setAccessible(true);
-                    disable.invoke(null);
-                    logStatic("Disabled PropertyInvalidatedCache (test mode).");
-                } catch (Exception e) {}
-                try {
-                    Method disable = cacheClass.getDeclaredMethod("disableForCurrentProcess");
-                    disable.setAccessible(true);
-                    disable.invoke(null);
-                    logStatic("Disabled PropertyInvalidatedCache (current process).");
-                } catch (Exception e) {}
-            } catch (Throwable t) {
-                logStatic("PropertyInvalidatedCache disable failed: " + t.getMessage());
-            }
-
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            final Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-            sPackageManagerField.setAccessible(true);
-
-            Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-            Object mockPm = Proxy.newProxyInstance(
-                    iPackageManagerClass.getClassLoader(),
-                    new Class<?>[]{iPackageManagerClass},
-                    new InvocationHandler() {
-                        private Object mRealPm = null;
-
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            if ("hasSystemFeature".equals(method.getName())) {
-                                if (args != null && args.length > 0) {
-                                    String feature = (String) args[0];
-                                    if ("android.hardware.telephony.euicc".equals(feature)) {
-                                        return true; // Fake eSIM hardware support
-                                    }
-                                }
-                            }
-
-                            if (mRealPm == null && sGetServiceMethod != null && sAsInterfaceMethod != null) {
-                                try {
-                                    IBinder pmBinder = (IBinder) sGetServiceMethod.invoke(null, "package");
-                                    if (pmBinder != null) {
-                                        mRealPm = sAsInterfaceMethod.invoke(null, pmBinder);
-                                        logStatic("Lazily resolved real IPackageManager successfully.");
-                                    }
-                                } catch (Throwable t) {
-                                    logStatic("Failed to lazily resolve real IPackageManager: " + t.getMessage());
-                                }
-                            }
-
-                            if (mRealPm == null) {
-                                logStatic("WARNING: targetPm is null during method call: " + method.getName());
-                                Class<?> retType = method.getReturnType();
-                                if (retType == boolean.class) return false;
-                                if (retType == int.class) return 0;
-                                if (retType == long.class) return 0L;
-                                return null;
-                            }
-
-                            return method.invoke(mRealPm, args);
-                        }
-                    }
-            );
-
-            sPackageManagerField.set(null, mockPm);
-            logStatic("Injected mock sPackageManager wrapper.");
+            Class<?> vmRuntimeClass = Class.forName("dalvik.system.VMRuntime");
+            Method getRuntimeMethod = vmRuntimeClass.getDeclaredMethod("getRuntime");
+            Object vmRuntime = getRuntimeMethod.invoke(null);
+            Method setExemptionsMethod = vmRuntimeClass.getDeclaredMethod("setHiddenApiExemptions", String[].class);
+            setExemptionsMethod.invoke(vmRuntime, new Object[]{new String[]{"L"}});
+            logStatic("Bypassed hidden API restrictions via VMRuntime.");
         } catch (Throwable t) {
-            logStatic("Failed to inject sPackageManager mock: " + t.getMessage());
-            logStackTrace(t);
+            logStatic("Failed to bypass hidden API restrictions via VMRuntime: " + t.getMessage());
         }
     }
 
-    // =========================================================================
-    // Mock EuiccService (to spoof EID, download, and EuiccInfo)
-    // =========================================================================
-
-    private static Object createMockController(final ClassLoader classLoader) {
+    private static void disablePineNativeHiddenApiBypass() {
         try {
-            Class<?> iEuiccControllerClass = Class.forName("android.telephony.euicc.IEuiccController", true, classLoader);
-            return Proxy.newProxyInstance(
-                    classLoader,
-                    new Class<?>[]{iEuiccControllerClass},
-                    new InvocationHandler() {
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            String name = method.getName();
-                            
-                            if ("getEid".equals(name)) {
-                                return sEid;
-                            }
-                            
-                            if ("getEuiccInfo".equals(name)) {
-                                Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo", true, classLoader);
-                                Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
-                                constructor.setAccessible(true);
-                                return constructor.newInstance("1.0");
-                            }
-                            
-                            if ("downloadSubscription".equals(name)) {
-                                logStatic("Intercepted downloadSubscription via IPC mock!");
-                                
-                                // 1. Extract activation code
-                                if (args != null && args.length > 0) {
-                                    Object sub = null;
-                                    for (Object arg : args) {
-                                        if (arg != null && arg.getClass().getName().equals("android.telephony.euicc.DownloadableSubscription")) {
-                                            sub = arg;
-                                            break;
-                                        }
-                                    }
-                                    if (sub != null) {
-                                        try {
-                                            Method getCode = sub.getClass().getDeclaredMethod("getEncodedActivationCode");
-                                            getCode.setAccessible(true);
-                                            String code = (String) getCode.invoke(sub);
-                                            if (code != null) {
-                                                handleActivationCode(code);
-                                            }
-                                        } catch (Throwable t) {
-                                            logStatic("Failed to parse activation code: " + t.getMessage());
-                                        }
-                                    }
-                                }
-
-                                // 2. Trigger PendingIntent callback for success
-                                if (args != null) {
-                                    android.app.PendingIntent callback = null;
-                                    for (Object arg : args) {
-                                        if (arg instanceof android.app.PendingIntent) {
-                                            callback = (android.app.PendingIntent) arg;
-                                        }
-                                    }
-                                    if (callback != null) {
-                                        Application app = getApplication();
-                                        if (app != null) {
-                                            logStatic("Triggering download success callback...");
-                                            Intent resultIntent = new Intent();
-                                            callback.send(app, 0, resultIntent);
-                                        } else {
-                                            logStatic("Cannot trigger callback: Application context is null.");
-                                        }
-                                    }
-                                }
-                                return null; // method returns void
-                            }
-                            
-                            // Default return values for other primitive methods to avoid NPE
-                            Class<?> retType = method.getReturnType();
-                            if (retType == boolean.class) return false;
-                            if (retType == int.class) return 0;
-                            if (retType == long.class) return 0L;
-                            return null;
-                        }
-                    }
-            );
-        } catch (Throwable t) {
-            logStatic("Failed to create lazy mock IEuiccController: " + t.getMessage());
-            logStackTrace(t);
-            return null;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void mockEuiccService() {
-        try {
-            Class<?> iBinderClass = Class.forName("android.os.IBinder");
-            IBinder mockBinder = (IBinder) Proxy.newProxyInstance(
-                    iBinderClass.getClassLoader(),
-                    new Class<?>[]{iBinderClass},
-                    new InvocationHandler() {
-                        private Object mMockController = null;
-
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            String name = method.getName();
-                            if ("queryLocalInterface".equals(name)) {
-                                if (mMockController == null) {
-                                    ClassLoader classLoader = null;
-                                    Application app = getApplication();
-                                    if (app != null) {
-                                        classLoader = app.getClassLoader();
-                                    }
-                                    if (classLoader == null) {
-                                        classLoader = Thread.currentThread().getContextClassLoader();
-                                    }
-                                    if (classLoader == null) {
-                                        classLoader = ClassLoader.getSystemClassLoader();
-                                    }
-                                    mMockController = createMockController(classLoader);
-                                }
-                                return mMockController;
-                            }
-                            if ("pingBinder".equals(name) || "isBinderAlive".equals(name)) {
-                                return true;
-                            }
-                            if ("getInterfaceDescriptor".equals(name)) {
-                                return "android.telephony.euicc.IEuiccController";
-                            }
-                            
-                            Class<?> retType = method.getReturnType();
-                            if (retType == boolean.class) return false;
-                            if (retType == int.class) return 0;
-                            if (retType == long.class) return 0L;
-                            return null;
-                        }
-                    }
-            );
-
-            Class<?> serviceManagerClass = Class.forName("android.os.ServiceManager");
-            Field sCacheField = serviceManagerClass.getDeclaredField("sCache");
-            sCacheField.setAccessible(true);
-            Map<String, IBinder> cache = (Map<String, IBinder>) sCacheField.get(null);
+            Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
             
-            if (cache != null) {
-                cache.put("econtroller", mockBinder);
-                logStatic("Injected mock IEuiccController binder into ServiceManager cache.");
-            } else {
-                logStatic("ServiceManager.sCache is null! Cannot inject econtroller.");
-            }
+            Field f1 = pineConfigClass.getDeclaredField("disableHiddenApiPolicy");
+            f1.setAccessible(true);
+            f1.setBoolean(null, false);
+
+            Field f2 = pineConfigClass.getDeclaredField("disableHiddenApiPolicyForPlatformDomain");
+            f2.setAccessible(true);
+            f2.setBoolean(null, false);
+            logStatic("Disabled Pine's native HiddenAPI bypass.");
         } catch (Throwable t) {
-            logStatic("Failed to mock IEuiccController binder: " + t.getMessage());
-            logStackTrace(t);
+            logStatic("Failed to disable Pine HiddenAPI bypass: " + t.getMessage());
         }
     }
 
-    // =========================================================================
-    // Activation code handler — copy to clipboard
-    // =========================================================================
+    private static void loadPineLibrary(final String pineLibPath) throws Exception {
+        // Strategy 1: Load from the path provided by native companion (most reliable)
+        if (pineLibPath != null && !pineLibPath.isEmpty()) {
+            try {
+                System.load(pineLibPath);
+                logStatic("Successfully loaded libpine.so from companion path: " + pineLibPath);
+                configurePineLoader(pineLibPath);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                logStatic("Companion path load failed: " + e.getMessage());
+            }
+        }
+
+        // Strategy 2: Try System.loadLibrary (works on Magisk with system overlay)
+        try {
+            System.loadLibrary("pine");
+            logStatic("Successfully loaded libpine.so via System.loadLibrary");
+            return;
+        } catch (UnsatisfiedLinkError e) {
+            logStatic("System.loadLibrary(\"pine\") failed: " + e.getMessage());
+        }
+
+        // Strategy 3: Try explicit system paths
+        String[] fallbackPaths = {
+            "/system/lib64/libpine.so",
+            "/system/lib/libpine.so",
+        };
+        for (String path : fallbackPaths) {
+            try {
+                System.load(path);
+                logStatic("Successfully loaded Pine from fallback: " + path);
+                configurePineLoader(path);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                logStatic("Fallback load failed for " + path + ": " + e.getMessage());
+            }
+        }
+
+        throw new Exception("Failed to load libpine.so from any path");
+    }
+
+    private static void configurePineLoader(final String loadedPath) {
+        try {
+            Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
+            Field libLoaderField = pineConfigClass.getDeclaredField("libLoader");
+            libLoaderField.setAccessible(true);
+
+            Class<?> loaderInterface = libLoaderField.getType();
+
+            Object customLoader = java.lang.reflect.Proxy.newProxyInstance(
+                loaderInterface.getClassLoader(),
+                new Class<?>[]{ loaderInterface },
+                new java.lang.reflect.InvocationHandler() {
+                    @Override
+                    public Object invoke(Object proxy, Method method, Object[] args) {
+                        if (method.getName().equals("loadLib")) {
+                            System.load(loadedPath);
+                        }
+                        return null;
+                    }
+                }
+            );
+
+            libLoaderField.set(null, customLoader);
+
+            Pine.ensureInitialized();
+            logStatic("  Pine initialized with custom lib loader");
+        } catch (Throwable t) {
+            logStatic("  Warning: Pine custom loader setup failed: " + t.getMessage());
+        }
+    }
+
+    private static void installHooks() {
+        logStatic("Installing Pine hooks...");
+        try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
+        }
+        try { hookEuiccManagerGetEid(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerGetEid failed: " + t.getMessage());
+        }
+        try { hookEuiccManagerGetEuiccInfo(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerGetEuiccInfo failed: " + t.getMessage());
+        }
+        try { hookPackageManagerHasSystemFeature(); } catch (Throwable t) {
+            logStatic("  WARN: hookPackageManagerHasSystemFeature failed: " + t.getMessage());
+        }
+        try { hookForActivationCode(); } catch (Throwable t) {
+            logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
+        }
+        try { hookEuiccManagerDownloadSubscription(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerDownloadSubscription failed: " + t.getMessage());
+        }
+        logStatic("Hook installation complete.");
+    }
+
+    private static void hookEuiccManagerGetEuiccInfo() {
+        try {
+            Method getEuiccInfo = EuiccManager.class.getDeclaredMethod("getEuiccInfo");
+            Pine.hook(getEuiccInfo, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    try {
+                        Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo");
+                        Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
+                        constructor.setAccessible(true);
+                        Object mockInfo = constructor.newInstance("1.0");
+                        callFrame.setResult(mockInfo);
+                    } catch (Exception e) {
+                        callFrame.setResult(null);
+                    }
+                }
+            });
+            logStatic("  Hooked EuiccManager.getEuiccInfo()");
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.getEuiccInfo() not available on this API level");
+        }
+    }
+
+    private static void hookEuiccManagerIsEnabled() throws Exception {
+        Method isEnabled = EuiccManager.class.getDeclaredMethod("isEnabled");
+        Pine.hook(isEnabled, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                logStatic("Spoofed EuiccManager.isEnabled() -> true");
+                callFrame.setResult(true);
+            }
+        });
+        logStatic("  Hooked EuiccManager.isEnabled()");
+    }
+
+    private static void hookEuiccManagerGetEid() {
+        try {
+            Method getEid = EuiccManager.class.getDeclaredMethod("getEid");
+            Pine.hook(getEid, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    logStatic("Spoofed EuiccManager.getEid() -> " + sEid);
+                    callFrame.setResult(sEid);
+                }
+            });
+            logStatic("  Hooked EuiccManager.getEid()");
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.getEid() not available on this API level");
+        }
+    }
+
+    private static void hookPackageManagerHasSystemFeature() {
+        try {
+            Class<?> apmClass = Class.forName("android.app.ApplicationPackageManager");
+            
+            // Hook 1: hasSystemFeature(String)
+            try {
+                Method m1 = apmClass.getDeclaredMethod("hasSystemFeature", String.class);
+                Pine.hook(m1, new MethodHook() {
+                    @Override
+                    public void afterCall(Pine.CallFrame callFrame) {
+                        String featureName = (String) callFrame.args[0];
+                        if (featureName != null && featureName.startsWith("android.hardware.telephony.euicc")) {
+                            callFrame.setResult(true);
+                        }
+                    }
+                });
+            } catch (Throwable t) {
+                logStatic("  Failed to hook hasSystemFeature(String): " + t.getMessage());
+            }
+
+            // Hook 2: hasSystemFeature(String, int)
+            try {
+                Method m2 = apmClass.getDeclaredMethod("hasSystemFeature", String.class, int.class);
+                Pine.hook(m2, new MethodHook() {
+                    @Override
+                    public void afterCall(Pine.CallFrame callFrame) {
+                        String featureName = (String) callFrame.args[0];
+                        if (featureName != null && featureName.startsWith("android.hardware.telephony.euicc")) {
+                            callFrame.setResult(true);
+                        }
+                    }
+                });
+            } catch (Throwable t) {
+                logStatic("  Failed to hook hasSystemFeature(String, int): " + t.getMessage());
+            }
+
+            logStatic("  Hooked ApplicationPackageManager.hasSystemFeature()");
+        } catch (Throwable t) {
+            logStatic("  Failed to hook hasSystemFeature: " + t.getMessage());
+        }
+    }
+
+    private static void hookForActivationCode() throws Exception {
+        Method forActivationCode = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
+        Pine.hook(forActivationCode, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                String code = (String) callFrame.args[0];
+                handleActivationCode(code);
+            }
+        });
+        logStatic("  Hooked DownloadableSubscription.forActivationCode()");
+    }
+
+    private static void hookEuiccManagerDownloadSubscription() {
+        try {
+            Class<?> euiccManagerClass = Class.forName("android.telephony.euicc.EuiccManager");
+            Method download = euiccManagerClass.getDeclaredMethod("downloadSubscription", 
+                DownloadableSubscription.class, boolean.class, PendingIntent.class);
+            
+            Pine.hook(download, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    logStatic("Intercepted EuiccManager.downloadSubscription()!");
+                    
+                    callFrame.setResult(null);
+
+                    try {
+                        DownloadableSubscription sub = (DownloadableSubscription) callFrame.args[0];
+                        if (sub != null) {
+                            String code = sub.getEncodedActivationCode();
+                            if (code != null) {
+                                handleActivationCode(code);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        logStatic("Failed to extract code from subscription: " + t.getMessage());
+                    }
+
+                    PendingIntent callbackIntent = (PendingIntent) callFrame.args[2];
+                    if (callbackIntent != null) {
+                        try {
+                            Intent resultIntent = new Intent();
+                            callbackIntent.send(getApplicationContext(), 0, resultIntent);
+                            logStatic("Triggered success callback to app.");
+                        } catch (Exception e) {
+                            logStatic("Failed to send callback intent: " + e.getMessage());
+                        }
+                    }
+                }
+            });
+            logStatic("  Hooked EuiccManager.downloadSubscription()");
+        } catch (Throwable t) {
+            logStatic("  Failed to hook downloadSubscription(): " + t.getMessage());
+        }
+    }
+
+    private static Context getApplicationContext() {
+        if (sApplication != null) return sApplication;
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method currentApplicationMethod = activityThreadClass.getDeclaredMethod("currentApplication");
+            sApplication = (Application) currentApplicationMethod.invoke(null);
+        } catch (Exception ignored) {}
+        return sApplication;
+    }
+
+    private static void spoofBuildFields() {
+        try {
+            Class<?> buildClass = android.os.Build.class;
+            setStaticField(buildClass, "MODEL", sSpoofModel);
+            setStaticField(buildClass, "DEVICE", sSpoofDevice);
+            setStaticField(buildClass, "MANUFACTURER", sSpoofManufacturer);
+            setStaticField(buildClass, "BRAND", sSpoofBrand);
+            setStaticField(buildClass, "PRODUCT", sSpoofProduct);
+            logStatic("  Spoofed Build fields: MODEL=" + sSpoofModel + ", DEVICE=" + sSpoofDevice
+                    + ", MANUFACTURER=" + sSpoofManufacturer + ", BRAND=" + sSpoofBrand);
+        } catch (Throwable t) {
+            logStatic("  Failed to spoof Build fields: " + t.getMessage());
+        }
+    }
+
+    private static void setStaticField(Class<?> clazz, String fieldName, Object value) {
+        try {
+            Field field = clazz.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(null, value);
+        } catch (Throwable t) {
+            logStatic("    Failed to set Build." + fieldName + ": " + t.getMessage());
+        }
+    }
 
     private static void handleActivationCode(String code) {
         logStatic("========================================");
-        logStatic("eSIM DOWNLOAD INTERCEPTED (Pure Reflection)");
+        logStatic("eSIM DOWNLOAD INTERCEPTED (Pine)");
         logStatic("  Activation Code: " + code);
         logStatic("========================================");
 
-        Application app = getApplication();
+        Application app = getApplicationContext();
         if (app != null) {
             try {
                 ClipboardManager clipboard = (ClipboardManager) app.getSystemService(Context.CLIPBOARD_SERVICE);
@@ -339,20 +402,6 @@ public class HookEntry {
         }
     }
 
-    // =========================================================================
-    // Utilities
-    // =========================================================================
-
-    private static Application getApplication() {
-        try {
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            Method currentApplicationMethod = activityThreadClass.getDeclaredMethod("currentApplication");
-            return (Application) currentApplicationMethod.invoke(null);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
     private static void parseConfig(String configJson) {
         if (configJson == null || configJson.trim().isEmpty()) {
             logStatic("No config.json provided from native layer.");
@@ -365,10 +414,12 @@ public class HookEntry {
                 sEid = root.getString("eid");
             }
             if (root.has("device")) {
-                sSpoofDevice = root.getString("device");
-            }
-            if (root.has("model")) {
-                sSpoofModel = root.getString("model");
+                JSONObject dev = root.getJSONObject("device");
+                sSpoofDevice = dev.optString("device", sSpoofDevice);
+                sSpoofModel = dev.optString("model", sSpoofModel);
+                sSpoofManufacturer = dev.optString("manufacturer", sSpoofManufacturer);
+                sSpoofBrand = dev.optString("brand", sSpoofBrand);
+                sSpoofProduct = dev.optString("product", sSpoofProduct);
             }
 
             logStatic("  Parsed config.json successfully.");
@@ -376,52 +427,6 @@ public class HookEntry {
             logStatic("  Config Device: " + sSpoofModel + " (" + sSpoofDevice + ")");
         } catch (Throwable t) {
             logStatic("  Failed to parse config.json, using defaults. Error: " + t.getMessage());
-        }
-    }
-
-    private static void buildSpoofedProps() {
-        switch (sSpoofDevice) {
-            case "shiba":
-                sSpoofManufacturer = "Google";
-                sSpoofBrand = "google";
-                sSpoofProduct = "shiba";
-                break;
-            case "husky":
-                sSpoofManufacturer = "Google";
-                sSpoofBrand = "google";
-                sSpoofProduct = "husky";
-                break;
-            case "felix":
-                sSpoofManufacturer = "Google";
-                sSpoofBrand = "google";
-                sSpoofProduct = "felix";
-                break;
-            default:
-                break;
-        }
-    }
-
-    private static void spoofBuildFields() {
-        try {
-            Class<?> buildClass = android.os.Build.class;
-            setStaticField(buildClass, "MODEL", sSpoofModel);
-            setStaticField(buildClass, "DEVICE", sSpoofDevice);
-            setStaticField(buildClass, "MANUFACTURER", sSpoofManufacturer);
-            setStaticField(buildClass, "BRAND", sSpoofBrand);
-            setStaticField(buildClass, "PRODUCT", sSpoofProduct);
-            logStatic("  Spoofed Build fields: MODEL=" + sSpoofModel + ", DEVICE=" + sSpoofDevice);
-        } catch (Throwable t) {
-            logStatic("  Failed to spoof Build fields: " + t.getMessage());
-        }
-    }
-
-    private static void setStaticField(Class<?> clazz, String fieldName, Object value) {
-        try {
-            Field field = clazz.getDeclaredField(fieldName);
-            field.setAccessible(true);
-            field.set(null, value);
-        } catch (Throwable t) {
-            logStatic("    Failed to set Build." + fieldName + ": " + t.getMessage());
         }
     }
 
