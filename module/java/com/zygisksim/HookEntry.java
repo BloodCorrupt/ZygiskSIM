@@ -21,7 +21,6 @@ import java.util.Locale;
 import java.util.Map;
 
 import top.canyie.pine.Pine;
-import top.canyie.pine.PineConfig;
 import top.canyie.pine.callback.MethodHook;
 
 /**
@@ -147,19 +146,37 @@ public class HookEntry {
     /**
      * Override Pine's internal library loader so it doesn't try
      * System.loadLibrary("pine") again (which fails under NeoZygisk).
-     * The native library is already loaded via System.load(), so the
-     * custom loader just calls System.load() with the same path.
+     * Uses reflection + dynamic Proxy since PineConfig.LibLoader
+     * may not be publicly accessible in all Pine versions.
      */
     private static void configurePineLoader(final String loadedPath) {
         try {
-            PineConfig.libLoader = new PineConfig.LibLoader() {
-                @Override
-                public void loadLib() {
-                    // Library is already loaded, but Pine wants this callback
-                    // to succeed without throwing. Re-loading the same .so is a no-op.
-                    System.load(loadedPath);
+            // Find the libLoader field on PineConfig
+            Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
+            Field libLoaderField = pineConfigClass.getDeclaredField("libLoader");
+            libLoaderField.setAccessible(true);
+
+            // Get the interface type of the field (e.g., PineConfig$LibLoader)
+            Class<?> loaderInterface = libLoaderField.getType();
+
+            // Create a dynamic proxy that implements the loader interface
+            Object customLoader = java.lang.reflect.Proxy.newProxyInstance(
+                loaderInterface.getClassLoader(),
+                new Class<?>[]{ loaderInterface },
+                new java.lang.reflect.InvocationHandler() {
+                    @Override
+                    public Object invoke(Object proxy, Method method, Object[] args) {
+                        // The loadLib() method — re-load from our path (no-op if already loaded)
+                        if (method.getName().equals("loadLib")) {
+                            System.load(loadedPath);
+                        }
+                        return null;
+                    }
                 }
-            };
+            );
+
+            libLoaderField.set(null, customLoader);
+
             // Force Pine to initialize NOW with our custom loader
             Pine.ensureInitialized();
             logStatic("  Pine initialized with custom lib loader");
