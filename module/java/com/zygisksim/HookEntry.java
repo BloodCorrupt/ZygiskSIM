@@ -290,7 +290,9 @@ public class HookEntry {
 
     private static void hookPackageManagerHasSystemFeature() {
         try {
-            Method hasSystemFeature = PackageManager.class.getDeclaredMethod("hasSystemFeature", String.class);
+            // PackageManager is abstract — hook the concrete ApplicationPackageManager instead
+            Class<?> apmClass = Class.forName("android.app.ApplicationPackageManager");
+            Method hasSystemFeature = apmClass.getDeclaredMethod("hasSystemFeature", String.class);
             Pine.hook(hasSystemFeature, new MethodHook() {
                 @Override
                 public void afterCall(Pine.CallFrame callFrame) {
@@ -304,9 +306,9 @@ public class HookEntry {
                     }
                 }
             });
-            logStatic("  Hooked PackageManager.hasSystemFeature()");
+            logStatic("  Hooked ApplicationPackageManager.hasSystemFeature()");
         } catch (Throwable t) {
-            logStatic("  Failed to hook PackageManager.hasSystemFeature(): " + t.getMessage());
+            logStatic("  Failed to hook hasSystemFeature(): " + t.getMessage());
         }
     }
 

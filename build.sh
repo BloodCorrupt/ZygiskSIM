@@ -157,9 +157,9 @@ if [ -f "$MODULE_DIR/pine/arm64-v8a/libpine.so" ]; then
     cp "$MODULE_DIR/pine/arm64-v8a/libpine.so" "$ZIP_ROOT/system/lib64/"
 fi
 
-# Copy system overlay
-mkdir -p "$ZIP_ROOT/system/etc/permissions"
-cp "$MODULE_DIR/system/etc/permissions/esim_feature.xml" "$ZIP_ROOT/system/etc/permissions/"
+# NOTE: esim_feature.xml system overlay removed — it caused com.android.phone
+# to crash by advertising eSIM hardware that doesn't exist system-wide.
+# Instead, we hook hasSystemFeature() per-app in HookEntry.java.
 
 # Copy native libraries (rename to ABI.so for Zygisk)
 mkdir -p "$ZIP_ROOT/zygisk"
