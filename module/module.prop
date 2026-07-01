@@ -1,0 +1,6 @@
+id=zygisksim
+name=ZygiskSIM
+version=v1.0
+versionCode=1
+author=ZygiskSIM
+description=Zygisk module to spoof eSIM support system-wide. Makes EuiccManager.isEnabled() return true and logs eSIM activation codes.
