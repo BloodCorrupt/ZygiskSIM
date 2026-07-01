@@ -8,8 +8,8 @@
  *   4. HookEntry performs ArtMethod swaps to hook EuiccManager methods
  */
 
-#include <cstdlib>
-#include <cstring>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
