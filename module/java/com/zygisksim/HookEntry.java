@@ -106,22 +106,39 @@ public class HookEntry {
 
         try {
             loadPineLibrary(pineLibPath);
-
-            // Spoof device identity FIRST (before any app code reads Build fields)
-            spoofBuildFields();
-
-            hookApplicationOnCreate();
-            hookEuiccManagerIsEnabled();
-            hookEuiccManagerGetEid();
-            hookPackageManagerHasSystemFeature();
-            hookSystemPropertiesGet();
-            hookForActivationCode();
-
-            logStatic("All Pine hooks successfully installed!");
         } catch (Throwable t) {
-            logStatic("Hook initialization failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+            logStatic("Pine library load FAILED — hooks will not be installed: " + t.getMessage());
             logStackTrace(t);
+            // Still spoof Build fields via reflection (no Pine needed)
+            spoofBuildFields();
+            return;
         }
+
+        // Spoof device identity FIRST (before any app code reads Build fields)
+        spoofBuildFields();
+
+        // Install each hook independently so a failure in one
+        // never crashes the app or prevents other hooks from working.
+        try { hookApplicationOnCreate(); } catch (Throwable t) {
+            logStatic("  WARN: hookApplicationOnCreate failed: " + t.getMessage());
+        }
+        try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
+        }
+        try { hookEuiccManagerGetEid(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerGetEid failed: " + t.getMessage());
+        }
+        try { hookPackageManagerHasSystemFeature(); } catch (Throwable t) {
+            logStatic("  WARN: hookPackageManagerHasSystemFeature failed: " + t.getMessage());
+        }
+        try { hookSystemPropertiesGet(); } catch (Throwable t) {
+            logStatic("  WARN: hookSystemPropertiesGet failed: " + t.getMessage());
+        }
+        try { hookForActivationCode(); } catch (Throwable t) {
+            logStatic("  WARN: hookForActivationCode failed (telephony class may not be ready): " + t.getMessage());
+        }
+
+        logStatic("Hook initialization complete.");
     }
 
     private static void loadPineLibrary(final String pineLibPath) throws Exception {
