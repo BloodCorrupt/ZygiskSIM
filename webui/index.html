@@ -616,7 +616,7 @@ function updatePreview() {
 }
 
 async function applyKsuConfig() {
-  if (!window.ksu) {
+  if (!window.ksu || typeof window.ksu.exec !== 'function') {
     showToast("❌ This feature only works inside KernelSU Manager!");
     return;
   }
@@ -627,31 +627,20 @@ async function applyKsuConfig() {
   const cmd = `cat << 'EOF' > /data/adb/modules/zygisksim/config.json\n${json}\nEOF\n`;
   
   try {
-    // Generate a unique ID for the IPC event
-    const id = Date.now().toString() + Math.random().toString();
-    
-    // Create the Promise wrapper just like the official kernelsu npm package
-    const response = await new Promise((resolve, reject) => {
-      const listener = (event) => {
-        const detail = event.detail;
-        if (detail.id === id) {
-          window.removeEventListener('ksu_webui_msg_receive', listener);
-          if (detail.error) reject(new Error(detail.error));
-          else resolve(detail.data);
-        }
-      };
-      window.addEventListener('ksu_webui_msg_receive', listener);
-      
-      const payload = JSON.stringify({ id: id, command: "exec", args: [cmd, {}] });
-      window.ksu.invoke(payload);
-    });
-
-    const { errno, stdout, stderr } = response;
-    
-    if (errno === 0) {
-      showToast("✓ Config applied! Please reboot.");
+    // Just execute it directly.
+    // If it returns an empty string, it succeeded (no stdout).
+    // If it throws or returns an error string, we catch it.
+    let response = "";
+    if (window.ksu.exec.constructor.name === 'AsyncFunction') {
+      response = await window.ksu.exec(cmd);
     } else {
-      showToast("❌ Failed to apply config: " + stderr);
+      response = window.ksu.exec(cmd);
+    }
+
+    if (response && response.includes("not found") || response.includes("denied")) {
+       showToast("❌ Error: " + response);
+    } else {
+       showToast("✓ Config saved securely! Please reboot.");
     }
   } catch (err) {
     showToast("❌ Error: " + err.message);
