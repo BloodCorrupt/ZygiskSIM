@@ -25,4 +25,4 @@ gradlew.bat
 *.kts
 local.properties
 *.zip
-suresim
+suresim/

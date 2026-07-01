@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   1. Companion process (root) reads classes.dex from module directory
- *   2. preAppSpecialize: fetch DEX data via companion socket
+ *   2. preAppSpecialize: fetch DEX data via companion socket (only for target processes)
  *   3. postAppSpecialize: load DEX via InMemoryDexClassLoader, call HookEntry.init()
  */
 
@@ -20,6 +20,35 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+
+// =====================================================================
+// Target process list
+// =====================================================================
+
+/**
+ * List of package names that should receive the eSIM spoofing hooks.
+ * Add any eSIM app that needs to see the device as eSIM-capable.
+ */
+static const char *TARGET_PACKAGES[] = {
+    "travel.eskimo.esim",           // Eskimo eSIM
+    "com.airalo.android",           // Airalo eSIM
+    "com.trustroam",                // Trustroam eSIM
+    "com.nomad.app",                // Nomad eSIM
+    "com.holafly.android",          // Holafly eSIM
+    "com.samsung.android.euicc",    // Samsung eSIM manager
+    "com.android.phone",            // System phone/telephony process
+    nullptr  // sentinel
+};
+
+static bool is_target_process(const char *package_name) {
+    if (package_name == nullptr) return false;
+    for (int i = 0; TARGET_PACKAGES[i] != nullptr; i++) {
+        if (strcmp(package_name, TARGET_PACKAGES[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // =====================================================================
 // Companion process (runs as root)
@@ -75,10 +104,41 @@ public:
     }
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
+        // Get the package name to decide if we should inject
+        const char *raw_name = nullptr;
+        if (args->nice_name) {
+            raw_name = env->GetStringUTFChars(args->nice_name, nullptr);
+        }
+
+        if (raw_name == nullptr || !is_target_process(raw_name)) {
+            // Not a target process — request to unload our library from this process
+            LOGD("Skipping non-target process: %s", raw_name ? raw_name : "(null)");
+            if (raw_name) env->ReleaseStringUTFChars(args->nice_name, raw_name);
+            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+
+        LOGI("Target process detected: %s — loading DEX payload", raw_name);
+
+        // Save package name for postAppSpecialize
+        strncpy(package_name, raw_name, sizeof(package_name) - 1);
+        package_name[sizeof(package_name) - 1] = '\0';
+        env->ReleaseStringUTFChars(args->nice_name, raw_name);
+
+        // Save app_data_dir for log path
+        if (args->app_data_dir) {
+            const char *dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+            if (dir) {
+                strncpy(app_data_dir, dir, sizeof(app_data_dir) - 1);
+                app_data_dir[sizeof(app_data_dir) - 1] = '\0';
+                env->ReleaseStringUTFChars(args->app_data_dir, dir);
+            }
+        }
+
         // Connect to root companion to fetch the DEX payload
         int companion_fd = api->connectCompanion();
         if (companion_fd < 0) {
-            LOGE("Failed to connect to companion process");
+            LOGE("Failed to connect to companion process for %s", package_name);
             return;
         }
 
@@ -91,7 +151,6 @@ public:
         }
 
         // Allocate and read DEX data
-        // Using malloc instead of new[] to avoid C++ runtime issues with APP_STL=none/c++_static
         dex_data = (uint8_t *)malloc(size);
         dex_size = size;
 
@@ -110,17 +169,16 @@ public:
             dex_data = nullptr;
             dex_size = 0;
         } else {
-            LOGI("DEX payload loaded: %u bytes", size);
+            LOGI("DEX payload loaded: %u bytes for %s", size, package_name);
         }
     }
 
     void postAppSpecialize([[maybe_unused]] const zygisk::AppSpecializeArgs *args) override {
         if (dex_data == nullptr || dex_size == 0) {
-            LOGD("No DEX payload, skipping hooks");
             return;
         }
 
-        LOGI("Loading DEX and initializing hooks...");
+        LOGI("Loading DEX and initializing hooks for %s...", package_name);
 
         // 1. Create a direct ByteBuffer from the DEX data
         jobject dex_buffer = env->NewDirectByteBuffer(dex_data, dex_size);
@@ -172,21 +230,30 @@ public:
             return;
         }
 
-        LOGI("HookEntry class loaded successfully");
+        LOGI("HookEntry class loaded successfully for %s", package_name);
 
-        // 5. Call HookEntry.init(logDir) to set up hooks
+        // 5. Build a writable log directory path
+        //    Use the app's own cache dir so we don't hit SELinux denials
+        char log_dir[512];
+        if (app_data_dir[0] != '\0') {
+            snprintf(log_dir, sizeof(log_dir), "%s/cache/zygisksim_logs", app_data_dir);
+        } else {
+            snprintf(log_dir, sizeof(log_dir), "/data/adb/modules/zygisksim/logs");
+        }
+
+        // 6. Call HookEntry.init(logDir) to set up hooks
         jmethodID init_method = env->GetStaticMethodID(
             hook_class, "init", "(Ljava/lang/String;)V");
-        jstring log_dir = env->NewStringUTF("/data/adb/modules/zygisksim/logs");
+        jstring j_log_dir = env->NewStringUTF(log_dir);
 
-        env->CallStaticVoidMethod(hook_class, init_method, log_dir);
+        env->CallStaticVoidMethod(hook_class, init_method, j_log_dir);
 
         if (env->ExceptionCheck()) {
-            LOGE("Exception during HookEntry.init()");
+            LOGE("Exception during HookEntry.init() for %s", package_name);
             env->ExceptionDescribe();
             env->ExceptionClear();
         } else {
-            LOGI("Hook initialization complete");
+            LOGI("Hook initialization complete for %s", package_name);
         }
 
         // Note: we do NOT free dex_data because InMemoryDexClassLoader
@@ -199,6 +266,8 @@ private:
     JNIEnv *env = nullptr;
     uint8_t *dex_data = nullptr;
     uint32_t dex_size = 0;
+    char package_name[256] = {};
+    char app_data_dir[512] = {};
 };
 
 REGISTER_ZYGISK_MODULE(ZygiskSIMModule)
