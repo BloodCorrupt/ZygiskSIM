@@ -110,6 +110,22 @@ public class HookEntry {
         // Spoof device identity immediately (no Pine needed, pure reflection)
         spoofBuildFields();
 
+        // Disable Pine's Hidden API bypass to prevent native SIGSEGVs in ShouldDenyAccessToMember
+        try {
+            Class<?> pineConfig = Class.forName("top.canyie.pine.PineConfig");
+            
+            Field f1 = pineConfig.getDeclaredField("disableHiddenApiPolicy");
+            f1.setAccessible(true);
+            f1.setBoolean(null, false);
+
+            Field f2 = pineConfig.getDeclaredField("disableHiddenApiPolicyForPlatformDomain");
+            f2.setAccessible(true);
+            f2.setBoolean(null, false);
+            logStatic("Disabled Pine's native HiddenAPI bypass.");
+        } catch (Throwable t) {
+            logStatic("Failed to disable Pine HiddenAPI bypass: " + t.getMessage());
+        }
+
         try {
             loadPineLibrary(pineLibPath);
         } catch (Throwable t) {
@@ -118,10 +134,17 @@ public class HookEntry {
             return;
         }
 
-        // Install hooks immediately. Deferring to Application.onCreate using
-        // Pine causes native SIGSEGV because of ART state transitions.
-        // The original native crash was caused by the SystemProperties infinite
-        // recursion (which we fixed), so immediate hooking is safe again.
+        // Set Pine hook mode to INLINE_WITHOUT_JIT (3) to avoid artQuickResolutionTrampoline crashes
+        try {
+            Class<?> pineClass = Class.forName("top.canyie.pine.Pine");
+            Method setHookMode = pineClass.getDeclaredMethod("setHookMode", int.class);
+            setHookMode.invoke(null, 3); // 3 = INLINE_WITHOUT_JIT
+            logStatic("Set Pine hook mode to INLINE_WITHOUT_JIT.");
+        } catch (Throwable t) {
+            logStatic("Failed to set Pine hook mode: " + t.getMessage());
+        }
+
+        // Install hooks immediately
         installHooks();
     }
 
