@@ -1,0 +1,61 @@
+name: Build ZygiskSIM
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Build Tools
+        run: |
+          yes | sdkmanager "build-tools;34.0.0" "platforms;android-34"
+
+      - name: Set Environment Variables
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          # Ensure build.sh is executable
+          chmod +x build.sh
+
+      - name: Build Module
+        run: ./build.sh
+
+      - name: Get Module Version
+        id: get_version
+        run: |
+          VERSION=$(grep "version=" module/module.prop | cut -d'=' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZygiskSIM-${{ steps.get_version.outputs.version }}
+          path: out/ZygiskSIM-${{ steps.get_version.outputs.version }}.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/ZygiskSIM-${{ steps.get_version.outputs.version }}.zip
+          generate_release_notes: true
