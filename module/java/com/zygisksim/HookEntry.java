@@ -77,12 +77,13 @@ public class HookEntry {
         SPOOFED_PROPS.put("ro.product.system.brand", SPOOF_BRAND);
     }
 
-    public static void init(String logDir) {
+    public static void init(String logDir, String pineLibPath) {
         sLogDir = logDir;
         logStatic("ZygiskSIM Java payload initializing (Pine)...");
+        logStatic("  Pine library path from native: " + pineLibPath);
 
         try {
-            loadPineLibrary();
+            loadPineLibrary(pineLibPath);
 
             // Spoof device identity FIRST (before any app code reads Build fields)
             spoofBuildFields();
@@ -101,8 +102,19 @@ public class HookEntry {
         }
     }
 
-    private static void loadPineLibrary() throws Exception {
-        // Try multiple loading strategies for compatibility with NeoZygisk / different mount namespaces
+    private static void loadPineLibrary(String pineLibPath) throws Exception {
+        // Strategy 1: Load from the path provided by native companion (most reliable)
+        if (pineLibPath != null && !pineLibPath.isEmpty()) {
+            try {
+                System.load(pineLibPath);
+                logStatic("Successfully loaded libpine.so from companion path: " + pineLibPath);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                logStatic("Companion path load failed: " + e.getMessage());
+            }
+        }
+
+        // Strategy 2: Try System.loadLibrary (works on Magisk with system overlay)
         try {
             System.loadLibrary("pine");
             logStatic("Successfully loaded libpine.so via System.loadLibrary");
@@ -111,7 +123,7 @@ public class HookEntry {
             logStatic("System.loadLibrary(\"pine\") failed: " + e.getMessage());
         }
 
-        // Fallback: try loading from explicit system paths
+        // Strategy 3: Try explicit system paths
         String[] fallbackPaths = {
             "/system/lib64/libpine.so",
             "/system/lib/libpine.so",
@@ -119,7 +131,7 @@ public class HookEntry {
         for (String path : fallbackPaths) {
             try {
                 System.load(path);
-                logStatic("Successfully loaded Pine from fallback path: " + path);
+                logStatic("Successfully loaded Pine from fallback: " + path);
                 return;
             } catch (UnsatisfiedLinkError e) {
                 logStatic("Fallback load failed for " + path + ": " + e.getMessage());
