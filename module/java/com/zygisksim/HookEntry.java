@@ -86,22 +86,16 @@ public class HookEntry {
             }
 
             Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+            final Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
             sPackageManagerField.setAccessible(true);
-            Object originalPm = sPackageManagerField.get(null);
 
-            if (originalPm == null) {
-                Method getPm = activityThreadClass.getDeclaredMethod("getPackageManager");
-                getPm.setAccessible(true);
-                originalPm = getPm.invoke(null);
-            }
-
-            final Object targetPm = originalPm;
             Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
             Object mockPm = Proxy.newProxyInstance(
                     iPackageManagerClass.getClassLoader(),
                     new Class<?>[]{iPackageManagerClass},
                     new InvocationHandler() {
+                        private Object mRealPm = null;
+
                         @Override
                         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                             if ("hasSystemFeature".equals(method.getName())) {
@@ -112,13 +106,38 @@ public class HookEntry {
                                     }
                                 }
                             }
-                            return method.invoke(targetPm, args);
+                            
+                            if (mRealPm == null) {
+                                // Resolve the real PackageManager dynamically
+                                try {
+                                    Class<?> serviceManagerClass = Class.forName("android.os.ServiceManager");
+                                    Method getService = serviceManagerClass.getDeclaredMethod("getService", String.class);
+                                    IBinder pmBinder = (IBinder) getService.invoke(null, "package");
+                                    Class<?> iPmStubClass = Class.forName("android.content.pm.IPackageManager$Stub");
+                                    Method asInterface = iPmStubClass.getDeclaredMethod("asInterface", IBinder.class);
+                                    mRealPm = asInterface.invoke(null, pmBinder);
+                                    logStatic("Lazily resolved real IPackageManager.");
+                                } catch (Throwable t) {
+                                    logStatic("Failed to lazily resolve real IPackageManager: " + t.getMessage());
+                                }
+                            }
+                            
+                            if (mRealPm == null) {
+                                logStatic("WARNING: targetPm is null during method call: " + method.getName());
+                                Class<?> retType = method.getReturnType();
+                                if (retType == boolean.class) return false;
+                                if (retType == int.class) return 0;
+                                if (retType == long.class) return 0L;
+                                return null;
+                            }
+                            
+                            return method.invoke(mRealPm, args);
                         }
                     }
             );
 
             sPackageManagerField.set(null, mockPm);
-            logStatic("Injected mock IPackageManager into ActivityThread.");
+            logStatic("Injected lazy mock IPackageManager into ActivityThread.");
         } catch (Throwable t) {
             logStatic("Failed to mock IPackageManager: " + t.getMessage());
             logStackTrace(t);
