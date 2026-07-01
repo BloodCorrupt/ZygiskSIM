@@ -113,6 +113,7 @@ javac \
     -source 1.8 \
     -target 1.8 \
     -bootclasspath "$ANDROID_JAR" \
+    -cp "$MODULE_DIR/java/pine.jar" \
     -d "$BUILD_DIR/java" \
     "$MODULE_DIR/java/com/zygisksim/HookEntry.java"
 
@@ -120,7 +121,8 @@ javac \
 "$D8" \
     --output "$BUILD_DIR/dex" \
     --min-api 26 \
-    "$BUILD_DIR/java/com/zygisksim/HookEntry.class"
+    "$BUILD_DIR/java/com/zygisksim/HookEntry.class" \
+    "$MODULE_DIR/java/pine.jar"
 
 echo "DEX compilation complete"
 
@@ -140,6 +142,10 @@ cp "$MODULE_DIR/post-fs-data.sh" "$ZIP_ROOT/"
 
 # Copy DEX payload
 cp "$BUILD_DIR/dex/classes.dex" "$ZIP_ROOT/"
+
+# Copy Pine native libraries
+mkdir -p "$ZIP_ROOT/pine"
+cp -r "$MODULE_DIR/pine/"* "$ZIP_ROOT/pine/"
 
 # Copy system overlay
 mkdir -p "$ZIP_ROOT/system/etc/permissions"

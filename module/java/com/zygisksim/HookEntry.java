@@ -1,213 +1,135 @@
 package com.zygisksim;
 
+import android.app.Application;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.telephony.euicc.DownloadableSubscription;
+import android.telephony.euicc.EuiccManager;
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.Map;
+
+import top.canyie.pine.Pine;
+import top.canyie.pine.callback.MethodHook;
 
 /**
- * ZygiskSIM Hook Entry Point (Binder Proxy Architecture)
+ * ZygiskSIM Hook Entry Point (Pine Architecture)
  *
- * Injects a custom IBinder into android.os.ServiceManager.sCache for the "euicc" service.
- * When EuiccManager calls ServiceManager.getService("euicc"), it gets our IBinder.
- * Our IBinder returns a dynamic proxy for IEuiccController in queryLocalInterface.
- * This proxy intercepts downloadSubscription, and automatically makes isEnabled() true.
+ * Uses the Pine hooking framework to perfectly mimic the behavior of the SureSIM Xposed module.
+ * - Hooks EuiccManager.isEnabled() to always return true.
+ * - Hooks DownloadableSubscription.forActivationCode() to copy the code to the clipboard.
+ * - Hooks Application.onCreate() to grab the Context for the ClipboardManager.
  */
 public class HookEntry {
 
     private static String sLogDir;
+    private static Application sApplication;
 
     public static void init(String logDir) {
         sLogDir = logDir;
-        logStatic("ZygiskSIM Java payload initializing...");
+        logStatic("ZygiskSIM Java payload initializing (Pine)...");
 
         try {
-            bypassHiddenApi();
-            logStatic("Hidden API bypassed.");
+            loadPineLibrary();
+            
+            // Pine.ensureInitialized() should be called early
+            // But loading the library is usually enough before the first hook
+            
+            hookApplicationOnCreate();
+            hookEuiccManagerIsEnabled();
+            hookForActivationCode();
 
-            injectBinderProxy();
-            logStatic("Binder proxy successfully injected for 'euicc' service.");
-
-            injectPackageManagerProxy();
-            logStatic("IPackageManager proxy successfully injected.");
-
+            logStatic("Pine hooks successfully installed!");
         } catch (Throwable t) {
             logStatic("Hook initialization failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
-    /**
-     * Standard double-reflection technique to bypass Android 9+ hidden API restrictions.
-     */
-    private static void bypassHiddenApi() {
-        try {
-            Method getDeclaredMethod = Class.class.getDeclaredMethod("getDeclaredMethod", String.class, Class[].class);
-            Class<?> vmRuntimeClass = Class.forName("dalvik.system.VMRuntime");
-            Method getRuntimeMethod = (Method) getDeclaredMethod.invoke(vmRuntimeClass, "getRuntime", new Class[0]);
-            Object vmRuntime = getRuntimeMethod.invoke(null);
-            Method setHiddenApiExemptions = (Method) getDeclaredMethod.invoke(vmRuntimeClass, "setHiddenApiExemptions", new Class[]{String[].class});
-            
-            // Exempt all APIs (prefix "L")
-            setHiddenApiExemptions.invoke(vmRuntime, new Object[]{new String[]{"L"}});
-        } catch (Throwable t) {
-            logStatic("Hidden API bypass warning: " + t.getMessage());
+    private static void loadPineLibrary() throws Exception {
+        // Determine the current process ABI
+        String abi;
+        if (android.os.Process.is64Bit()) {
+            abi = android.os.Build.SUPPORTED_64_BIT_ABIS[0];
+        } else {
+            abi = android.os.Build.SUPPORTED_32_BIT_ABIS[0];
         }
+        
+        // Path where Magisk/KernelSU installed our pine library
+        String soPath = "/data/adb/modules/zygisksim/pine/" + abi + "/libpine.so";
+        
+        File soFile = new File(soPath);
+        if (!soFile.exists()) {
+            throw new Exception("libpine.so not found at " + soPath);
+        }
+        
+        System.load(soPath);
+        logStatic("Loaded libpine.so for " + abi);
     }
 
-    /**
-     * Injects a proxy IBinder into ServiceManager.sCache
-     */
-    @SuppressWarnings("unchecked")
-    private static void injectBinderProxy() throws Exception {
-        ClassLoader cl = ClassLoader.getSystemClassLoader();
-
-        // 1. Create a dynamic proxy for IEuiccController
-        Class<?> iEuiccControllerClass = Class.forName("com.android.internal.telephony.euicc.IEuiccController");
-        
-        Object euiccControllerProxy = Proxy.newProxyInstance(
-                cl,
-                new Class<?>[]{iEuiccControllerClass},
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        String methodName = method.getName();
-                        
-                        // EuiccManager.isEnabled() checks if getIEuiccController() != null.
-                        // Our proxy exists, so it will return true. We don't need to hook isEnabled.
-
-                        if ("downloadSubscription".equals(methodName)) {
-                            handleDownloadSubscription(args);
-                            // It returns void or an int status code depending on API.
-                            // We return 0 (success) or null for void.
-                            return method.getReturnType() == int.class ? 0 : null;
-                        }
-
-                        // For all other IEuiccController methods, return default values to prevent crashes
-                        Class<?> retType = method.getReturnType();
-                        if (retType == boolean.class) return false;
-                        if (retType == int.class) return 0;
-                        return null;
-                    }
+    private static void hookApplicationOnCreate() throws Exception {
+        Method onCreate = Application.class.getDeclaredMethod("onCreate");
+        Pine.hook(onCreate, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                if (sApplication == null) {
+                    sApplication = (Application) callFrame.thisObject;
+                    logStatic("Application context captured.");
                 }
-        );
-
-        // 2. Create a proxy for IBinder that returns our IEuiccController proxy
-        Class<?> iBinderClass = Class.forName("android.os.IBinder");
-        
-        Object binderProxy = Proxy.newProxyInstance(
-                cl,
-                new Class<?>[]{iBinderClass},
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        if ("queryLocalInterface".equals(method.getName())) {
-                            return euiccControllerProxy;
-                        }
-                        // Default IBinder behavior for other methods
-                        if ("toString".equals(method.getName())) {
-                            return "ZygiskSIM-IBinderProxy";
-                        }
-                        Class<?> retType = method.getReturnType();
-                        if (retType == boolean.class) return false;
-                        if (retType == int.class) return 0;
-                        return null;
-                    }
-                }
-        );
-
-        // 3. Inject into ServiceManager.sCache
-        Class<?> serviceManagerClass = Class.forName("android.os.ServiceManager");
-        Field cacheField = serviceManagerClass.getDeclaredField("sCache");
-        cacheField.setAccessible(true);
-        
-        Map<String, Object> cache = (Map<String, Object>) cacheField.get(null);
-        cache.put("euicc", binderProxy);
+            }
+        });
     }
 
-    /**
-     * Injects a proxy for IPackageManager to spoof the eSIM system feature.
-     * KernelSU ignores system overlays without metamodules, so we spoof it in Java.
-     */
-    private static void injectPackageManagerProxy() throws Exception {
-        ClassLoader cl = ClassLoader.getSystemClassLoader();
-        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-        
-        // ActivityThread.sPackageManager is a static field holding the IPackageManager singleton
-        Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-        sPackageManagerField.setAccessible(true);
-        Object originalPackageManager = sPackageManagerField.get(null);
-
-        if (originalPackageManager == null) {
-            // If it's null, we have to fetch it first so we can wrap it
-            Method getPackageManagerMethod = activityThreadClass.getDeclaredMethod("getPackageManager");
-            getPackageManagerMethod.setAccessible(true);
-            originalPackageManager = getPackageManagerMethod.invoke(null);
-        }
-
-        if (originalPackageManager == null) {
-            logStatic("Could not get original IPackageManager.");
-            return;
-        }
-
-        Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-
-        final Object finalOriginalPm = originalPackageManager;
-        Object pmProxy = Proxy.newProxyInstance(
-                cl,
-                new Class<?>[]{iPackageManagerClass},
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        if ("hasSystemFeature".equals(method.getName())) {
-                            if (args != null && args.length > 0 && "android.hardware.telephony.euicc".equals(args[0])) {
-                                logStatic("Spoofed hasSystemFeature for android.hardware.telephony.euicc");
-                                return true;
-                            }
-                        }
-                        try {
-                            return method.invoke(finalOriginalPm, args);
-                        } catch (java.lang.reflect.InvocationTargetException e) {
-                            throw e.getTargetException(); // Unwrap exception to prevent crashes
-                        }
-                    }
-                }
-        );
-
-        sPackageManagerField.set(null, pmProxy);
+    private static void hookEuiccManagerIsEnabled() throws Exception {
+        Method isEnabled = EuiccManager.class.getDeclaredMethod("isEnabled");
+        Pine.hook(isEnabled, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                logStatic("Spoofed EuiccManager.isEnabled() -> true");
+                callFrame.setResult(true);
+            }
+        });
     }
 
-    /**
-     * Intercepts downloadSubscription and logs the activation code.
-     */
-    private static void handleDownloadSubscription(Object[] args) {
-        String activationCode = "<unknown>";
+    private static void hookForActivationCode() throws Exception {
+        Method forActivationCode = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
+        Pine.hook(forActivationCode, new MethodHook() {
+            @Override
+            public void afterCall(Pine.CallFrame callFrame) {
+                Object result = callFrame.getResult();
+                if (result instanceof DownloadableSubscription) {
+                    String code = (String) callFrame.args[0];
+                    handleActivationCode(code);
+                }
+            }
+        });
+    }
 
-        if (args != null && args.length > 0 && args[0] != null) {
-            Object subscription = args[0];
+    private static void handleActivationCode(String code) {
+        logStatic("========================================");
+        logStatic("eSIM DOWNLOAD INTERCEPTED (Pine)");
+        logStatic("  Activation Code: " + code);
+        logStatic("========================================");
+
+        if (sApplication != null) {
             try {
-                // Extract activation code via reflection on DownloadableSubscription
-                Field codeField = subscription.getClass().getDeclaredField("encodedActivationCode");
-                codeField.setAccessible(true);
-                Object codeObj = codeField.get(subscription);
-                if (codeObj != null) {
-                    activationCode = codeObj.toString();
+                ClipboardManager clipboard = (ClipboardManager) sApplication.getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    ClipData clip = ClipData.newPlainText("Encoded eSIM activation code", code);
+                    clipboard.setPrimaryClip(clip);
+                    logStatic("Code successfully copied to clipboard.");
                 }
             } catch (Exception e) {
-                logStatic("Could not extract activation code: " + e.getMessage());
+                logStatic("Failed to copy to clipboard: " + e.getMessage());
             }
+        } else {
+            logStatic("Cannot copy to clipboard: Application context is null.");
         }
-
-        logStatic("========================================");
-        logStatic("eSIM DOWNLOAD INTERCEPTED (Binder Proxy)");
-        logStatic("  Activation Code: " + activationCode);
-        logStatic("========================================");
     }
 
     private static void logStatic(String message) {
