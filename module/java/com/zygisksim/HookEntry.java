@@ -142,6 +142,9 @@ public class HookEntry {
         try { hookForActivationCode(); } catch (Throwable t) {
             logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
         }
+        try { hookEuiccManagerDownloadSubscription(); } catch (Throwable t) {
+            logStatic("  WARN: hookEuiccManagerDownloadSubscription failed: " + t.getMessage());
+        }
         logStatic("Hook installation complete.");
     }
 
@@ -305,15 +308,74 @@ public class HookEntry {
         Method forActivationCode = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
         Pine.hook(forActivationCode, new MethodHook() {
             @Override
-            public void afterCall(Pine.CallFrame callFrame) {
-                Object result = callFrame.getResult();
-                if (result instanceof DownloadableSubscription) {
-                    String code = (String) callFrame.args[0];
-                    handleActivationCode(code);
-                }
+            public void beforeCall(Pine.CallFrame callFrame) {
+                String code = (String) callFrame.args[0];
+                handleActivationCode(code);
             }
         });
         logStatic("  Hooked DownloadableSubscription.forActivationCode()");
+    }
+
+    // =========================================================================
+    // Hook: EuiccManager.downloadSubscription() → Bypass and trigger success
+    // =========================================================================
+
+    private static void hookEuiccManagerDownloadSubscription() {
+        try {
+            Class<?> euiccManagerClass = Class.forName("android.telephony.euicc.EuiccManager");
+            Method download = euiccManagerClass.getDeclaredMethod("downloadSubscription", 
+                DownloadableSubscription.class, boolean.class, PendingIntent.class);
+            
+            Pine.hook(download, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    logStatic("Intercepted EuiccManager.downloadSubscription()!");
+                    
+                    // Prevent original method from running (it would crash on unsupported devices)
+                    callFrame.setResult(null);
+
+                    // Try to extract the activation code if we didn't catch it earlier
+                    try {
+                        DownloadableSubscription sub = (DownloadableSubscription) callFrame.args[0];
+                        if (sub != null) {
+                            String code = sub.getEncodedActivationCode();
+                            if (code != null) {
+                                handleActivationCode(code);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        logStatic("Failed to extract code from subscription: " + t.getMessage());
+                    }
+
+                    // Trigger the app's callback so it thinks the download succeeded!
+                    PendingIntent callbackIntent = (PendingIntent) callFrame.args[2];
+                    if (callbackIntent != null) {
+                        try {
+                            // EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_OK == 0
+                            Intent resultIntent = new Intent();
+                            callbackIntent.send(getApplicationContext(), 0, resultIntent);
+                            logStatic("Triggered success callback to app.");
+                        } catch (Exception e) {
+                            logStatic("Failed to send callback intent: " + e.getMessage());
+                        }
+                    }
+                }
+            });
+            logStatic("  Hooked EuiccManager.downloadSubscription()");
+        } catch (Throwable t) {
+            logStatic("  Failed to hook downloadSubscription(): " + t.getMessage());
+        }
+    }
+
+    /** Helper to get context now that Application.onCreate hook is removed */
+    private static Context getApplicationContext() {
+        if (sApplication != null) return sApplication;
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method currentApplicationMethod = activityThreadClass.getDeclaredMethod("currentApplication");
+            sApplication = (Application) currentApplicationMethod.invoke(null);
+        } catch (Exception ignored) {}
+        return sApplication;
     }
 
     // =========================================================================
