@@ -627,7 +627,9 @@ async function applyKsuConfig() {
   // Use KSU exec API to write file as root
   const cmd = `cat << 'EOF' > /data/adb/modules/zygisksim/config.json\n${json}\nEOF\n`;
   try {
-    const { errno, stdout, stderr } = await window.ksu.exec(cmd);
+    const response = await window.ksu.exec(cmd);
+    const { errno, stdout, stderr } = JSON.parse(response);
+    
     if (errno === 0) {
       showToast("✓ Config applied! Please reboot.");
     } else {
