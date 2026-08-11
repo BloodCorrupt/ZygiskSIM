@@ -5,7 +5,6 @@ import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccManager;
 
@@ -14,6 +13,7 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.InvocationHandler;
@@ -23,13 +23,10 @@ import java.util.Locale;
 
 import org.json.JSONObject;
 
-import top.canyie.pine.Pine;
-import top.canyie.pine.callback.MethodHook;
-
 /**
  * Entry point for ZygiskSIM.
- * Reverted to Pine hooking framework. Uses dalvik.system.VMRuntime to bypass Hidden API policy
- * and disables Pine's native hidden API bypass to prevent SIGSEGV native crashes on newer Android versions.
+ * Uses LSplant hooking framework (native bridge). 
+ * Bypasses Hidden API policy via dalvik.system.VMRuntime.
  */
 public class HookEntry {
 
@@ -44,9 +41,13 @@ public class HookEntry {
     private static String sSpoofBrand = "google";
     private static String sSpoofProduct = "shiba";
 
-    public static void init(String logDir, String pineLibPath, String configJson) {
+    // JNI Native methods for LSplant
+    private static native Object nativeHook(Member target, Object hookerObject, Method callback);
+    private static native boolean nativeDeoptimize(Member method);
+
+    public static void init(String logDir, String configJson) {
         sLogDir = logDir;
-        logStatic("ZygiskSIM Java payload initializing (Pine Architecture)...");
+        logStatic("ZygiskSIM Java payload initializing (LSplant Architecture)...");
 
         // 1. Parse config.json if provided
         parseConfig(configJson);
@@ -57,19 +58,7 @@ public class HookEntry {
         // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime in Java
         bypassHiddenApiRestrictions();
 
-        // 4. Disable Pine's native Hidden API bypass to prevent native SIGSEGV
-        disablePineNativeHiddenApiBypass();
-
-        // 5. Load Pine library
-        try {
-            loadPineLibrary(pineLibPath);
-        } catch (Throwable t) {
-            logStatic("Pine library load FAILED — hooks will not be installed: " + t.getMessage());
-            logStackTrace(t);
-            return;
-        }
-
-        // 6. Install hooks immediately
+        // 4. Install hooks immediately
         installHooks();
     }
 
@@ -86,97 +75,8 @@ public class HookEntry {
         }
     }
 
-    private static void disablePineNativeHiddenApiBypass() {
-        try {
-            Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
-            
-            Field f1 = pineConfigClass.getDeclaredField("disableHiddenApiPolicy");
-            f1.setAccessible(true);
-            f1.setBoolean(null, true);
-
-            Field f2 = pineConfigClass.getDeclaredField("disableHiddenApiPolicyForPlatformDomain");
-            f2.setAccessible(true);
-            f2.setBoolean(null, true);
-            logStatic("Disabled Pine's native HiddenAPI bypass.");
-        } catch (Throwable t) {
-            logStatic("Failed to disable Pine HiddenAPI bypass: " + t.getMessage());
-        }
-    }
-
-    private static void loadPineLibrary(final String pineLibPath) throws Exception {
-        // Strategy 1: Load from the path provided by native companion (most reliable)
-        if (pineLibPath != null && !pineLibPath.isEmpty()) {
-            try {
-                System.load(pineLibPath);
-                logStatic("Successfully loaded libpine.so from companion path: " + pineLibPath);
-                configurePineLoader(pineLibPath);
-                return;
-            } catch (UnsatisfiedLinkError e) {
-                logStatic("Companion path load failed: " + e.getMessage());
-            }
-        }
-
-        // Strategy 2: Try System.loadLibrary (works on Magisk with system overlay)
-        try {
-            System.loadLibrary("pine");
-            logStatic("Successfully loaded libpine.so via System.loadLibrary");
-            return;
-        } catch (UnsatisfiedLinkError e) {
-            logStatic("System.loadLibrary(\"pine\") failed: " + e.getMessage());
-        }
-
-        // Strategy 3: Try explicit system paths
-        String[] fallbackPaths = {
-            "/system/lib64/libpine.so",
-            "/system/lib/libpine.so",
-        };
-        for (String path : fallbackPaths) {
-            try {
-                System.load(path);
-                logStatic("Successfully loaded Pine from fallback: " + path);
-                configurePineLoader(path);
-                return;
-            } catch (UnsatisfiedLinkError e) {
-                logStatic("Fallback load failed for " + path + ": " + e.getMessage());
-            }
-        }
-
-        throw new Exception("Failed to load libpine.so from any path");
-    }
-
-    private static void configurePineLoader(final String loadedPath) {
-        try {
-            Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
-            Field libLoaderField = pineConfigClass.getDeclaredField("libLoader");
-            libLoaderField.setAccessible(true);
-
-            Class<?> loaderInterface = libLoaderField.getType();
-
-            Object customLoader = java.lang.reflect.Proxy.newProxyInstance(
-                loaderInterface.getClassLoader(),
-                new Class<?>[]{ loaderInterface },
-                new java.lang.reflect.InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) {
-                        if (method.getName().equals("loadLib")) {
-                            System.load(loadedPath);
-                        }
-                        return null;
-                    }
-                }
-            );
-
-            libLoaderField.set(null, customLoader);
-
-            Pine.ensureInitialized();
-            logStatic("  Pine initialized with custom lib loader");
-        } catch (Throwable t) {
-            logStatic("  Warning: Pine custom loader setup failed: " + t.getMessage());
-        }
-    }
-
     private static void installHooks() {
-        logStatic("Installing Pine hooks...");
+        logStatic("Installing LSplant hooks...");
         try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
         }
@@ -201,54 +101,143 @@ public class HookEntry {
         logStatic("Hook installation complete.");
     }
 
+    // =====================================================================
+    // Hook Implementations
+    // =====================================================================
+
+    public static class EuiccManagerGetEuiccInfoHooker {
+        public Method backupMethod;
+        public Object callback(Object[] args) {
+            try {
+                Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo");
+                Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
+                constructor.setAccessible(true);
+                return constructor.newInstance("1.0");
+            } catch (Exception e) {
+                return null;
+            }
+        }
+    }
+
     private static void hookEuiccManagerGetEuiccInfo() {
         try {
             Method getEuiccInfo = EuiccManager.class.getDeclaredMethod("getEuiccInfo");
-            Pine.hook(getEuiccInfo, new MethodHook() {
-                @Override
-                public void beforeCall(Pine.CallFrame callFrame) {
-                    try {
-                        Class<?> euiccInfoClass = Class.forName("android.telephony.euicc.EuiccInfo");
-                        Constructor<?> constructor = euiccInfoClass.getDeclaredConstructor(String.class);
-                        constructor.setAccessible(true);
-                        Object mockInfo = constructor.newInstance("1.0");
-                        callFrame.setResult(mockInfo);
-                    } catch (Exception e) {
-                        callFrame.setResult(null);
-                    }
-                }
-            });
-            logStatic("  Hooked EuiccManager.getEuiccInfo()");
+            nativeDeoptimize(getEuiccInfo);
+            
+            EuiccManagerGetEuiccInfoHooker hooker = new EuiccManagerGetEuiccInfoHooker();
+            Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+            
+            hooker.backupMethod = (Method) nativeHook(getEuiccInfo, hooker, callback);
+            if (hooker.backupMethod != null) {
+                logStatic("  Hooked EuiccManager.getEuiccInfo()");
+            } else {
+                logStatic("  Failed to hook EuiccManager.getEuiccInfo()");
+            }
         } catch (Throwable t) {
             logStatic("  EuiccManager.getEuiccInfo() not available on this API level");
         }
     }
 
+    public static class EuiccManagerIsEnabledHooker {
+        public Method backupMethod;
+        public Object callback(Object[] args) {
+            logStatic("Spoofed EuiccManager.isEnabled() -> true");
+            return true;
+        }
+    }
+
     private static void hookEuiccManagerIsEnabled() throws Exception {
         Method isEnabled = EuiccManager.class.getDeclaredMethod("isEnabled");
-        Pine.hook(isEnabled, new MethodHook() {
-            @Override
-            public void beforeCall(Pine.CallFrame callFrame) {
-                logStatic("Spoofed EuiccManager.isEnabled() -> true");
-                callFrame.setResult(true);
-            }
-        });
-        logStatic("  Hooked EuiccManager.isEnabled()");
+        nativeDeoptimize(isEnabled);
+        
+        EuiccManagerIsEnabledHooker hooker = new EuiccManagerIsEnabledHooker();
+        Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+        
+        hooker.backupMethod = (Method) nativeHook(isEnabled, hooker, callback);
+        if (hooker.backupMethod != null) {
+            logStatic("  Hooked EuiccManager.isEnabled()");
+        } else {
+            logStatic("  Failed to hook EuiccManager.isEnabled()");
+        }
+    }
+
+    public static class EuiccManagerGetEidHooker {
+        public Method backupMethod;
+        public Object callback(Object[] args) {
+            logStatic("Spoofed EuiccManager.getEid() -> " + sEid);
+            return sEid;
+        }
     }
 
     private static void hookEuiccManagerGetEid() {
         try {
             Method getEid = EuiccManager.class.getDeclaredMethod("getEid");
-            Pine.hook(getEid, new MethodHook() {
-                @Override
-                public void beforeCall(Pine.CallFrame callFrame) {
-                    logStatic("Spoofed EuiccManager.getEid() -> " + sEid);
-                    callFrame.setResult(sEid);
-                }
-            });
-            logStatic("  Hooked EuiccManager.getEid()");
+            nativeDeoptimize(getEid);
+            
+            EuiccManagerGetEidHooker hooker = new EuiccManagerGetEidHooker();
+            Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+            
+            hooker.backupMethod = (Method) nativeHook(getEid, hooker, callback);
+            if (hooker.backupMethod != null) {
+                logStatic("  Hooked EuiccManager.getEid()");
+            } else {
+                logStatic("  Failed to hook EuiccManager.getEid()");
+            }
         } catch (Throwable t) {
             logStatic("  EuiccManager.getEid() not available on this API level");
+        }
+    }
+
+    public static class ActivityThreadGetPackageManagerHooker {
+        public Method backupMethod;
+        private Object mMockPm = null;
+        
+        public Object callback(Object[] args) {
+            Object originalPm = null;
+            try {
+                if (backupMethod != null) {
+                    originalPm = backupMethod.invoke(null, args);
+                }
+            } catch (Exception e) {
+                logStackTrace(e);
+            }
+            
+            if (originalPm == null) return null;
+
+            if (mMockPm != null) {
+                return mMockPm;
+            }
+
+            try {
+                final Object targetPm = originalPm;
+                Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+                mMockPm = Proxy.newProxyInstance(
+                        iPackageManagerClass.getClassLoader(),
+                        new Class<?>[]{iPackageManagerClass},
+                        new InvocationHandler() {
+                            @Override
+                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                if ("hasSystemFeature".equals(method.getName())) {
+                                    if (args != null && args.length > 0) {
+                                        String feature = (String) args[0];
+                                        if ("android.hardware.telephony.euicc".equals(feature)) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                try {
+                                    return method.invoke(targetPm, args);
+                                } catch (java.lang.reflect.InvocationTargetException e) {
+                                    throw e.getCause();
+                                }
+                            }
+                        }
+                );
+                return mMockPm;
+            } catch (Exception e) {
+                logStackTrace(e);
+                return originalPm;
+            }
         }
     }
 
@@ -256,50 +245,106 @@ public class HookEntry {
         try {
             Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
             Method getPackageManager = activityThreadClass.getDeclaredMethod("getPackageManager");
-            Pine.hook(getPackageManager, new MethodHook() {
-                private Object mMockPm = null;
-
-                @Override
-                public void afterCall(Pine.CallFrame callFrame) throws Throwable {
-                    Object originalPm = callFrame.getResult();
-                    if (originalPm == null) return;
-
-                    if (mMockPm != null) {
-                        callFrame.setResult(mMockPm);
-                        return;
-                    }
-
-                    final Object targetPm = originalPm;
-                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-                    mMockPm = Proxy.newProxyInstance(
-                            iPackageManagerClass.getClassLoader(),
-                            new Class<?>[]{iPackageManagerClass},
-                            new InvocationHandler() {
-                                @Override
-                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                    if ("hasSystemFeature".equals(method.getName())) {
-                                        if (args != null && args.length > 0) {
-                                            String feature = (String) args[0];
-                                            if ("android.hardware.telephony.euicc".equals(feature)) {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    try {
-                                        return method.invoke(targetPm, args);
-                                    } catch (java.lang.reflect.InvocationTargetException e) {
-                                        throw e.getCause();
-                                    }
-                                }
-                            }
-                    );
-                    callFrame.setResult(mMockPm);
-                }
-            });
-            logStatic("Successfully hooked ActivityThread.getPackageManager() via Pine.");
+            nativeDeoptimize(getPackageManager);
+            
+            ActivityThreadGetPackageManagerHooker hooker = new ActivityThreadGetPackageManagerHooker();
+            Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+            
+            hooker.backupMethod = (Method) nativeHook(getPackageManager, hooker, callback);
+            if (hooker.backupMethod != null) {
+                logStatic("Successfully hooked ActivityThread.getPackageManager() via LSplant.");
+            } else {
+                logStatic("Failed to hook ActivityThread.getPackageManager()");
+            }
         } catch (Throwable t) {
             logStatic("Failed to hook ActivityThread.getPackageManager(): " + t.getMessage());
             logStackTrace(t);
+        }
+    }
+
+    public static class DownloadableSubscriptionForActivationCodeHooker {
+        public Method backupMethod;
+        public Object callback(Object[] args) {
+            if (args != null && args.length > 0) {
+                String code = (String) args[0];
+                handleActivationCode(code);
+            }
+            
+            try {
+                if (backupMethod != null) {
+                    return backupMethod.invoke(null, args);
+                }
+            } catch (Exception e) {
+                logStackTrace(e);
+            }
+            return null;
+        }
+    }
+
+    private static void hookForActivationCode() throws Exception {
+        Method forActivationCode = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
+        nativeDeoptimize(forActivationCode);
+        
+        DownloadableSubscriptionForActivationCodeHooker hooker = new DownloadableSubscriptionForActivationCodeHooker();
+        Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+        
+        hooker.backupMethod = (Method) nativeHook(forActivationCode, hooker, callback);
+        if (hooker.backupMethod != null) {
+            logStatic("  Hooked DownloadableSubscription.forActivationCode()");
+        } else {
+            logStatic("  Failed to hook DownloadableSubscription.forActivationCode()");
+        }
+    }
+
+    public static class EuiccManagerDownloadSubscriptionHooker {
+        public Method backupMethod;
+        public Object callback(Object[] args) {
+            logStatic("Intercepted EuiccManager.downloadSubscription()!");
+            
+            try {
+                if (args != null && args.length > 0 && args[0] instanceof DownloadableSubscription) {
+                    DownloadableSubscription sub = (DownloadableSubscription) args[0];
+                    String code = sub.getEncodedActivationCode();
+                    if (code != null) {
+                        handleActivationCode(code);
+                    }
+                }
+            } catch (Throwable t) {
+                logStatic("Failed to extract code from subscription: " + t.getMessage());
+            }
+
+            if (args != null && args.length > 2 && args[2] instanceof PendingIntent) {
+                PendingIntent callbackIntent = (PendingIntent) args[2];
+                try {
+                    Intent resultIntent = new Intent();
+                    callbackIntent.send(getApplicationContext(), 0, resultIntent);
+                    logStatic("Triggered success callback to app.");
+                } catch (Exception e) {
+                    logStatic("Failed to send callback intent: " + e.getMessage());
+                }
+            }
+            return null;
+        }
+    }
+
+    private static void hookEuiccManagerDownloadSubscription() {
+        try {
+            Class<?> euiccManagerClass = Class.forName("android.telephony.euicc.EuiccManager");
+            Method download = euiccManagerClass.getDeclaredMethod("downloadSubscription", 
+                DownloadableSubscription.class, boolean.class, PendingIntent.class);
+            nativeDeoptimize(download);
+            
+            EuiccManagerDownloadSubscriptionHooker hooker = new EuiccManagerDownloadSubscriptionHooker();
+            Method callback = hooker.getClass().getDeclaredMethod("callback", Object[].class);
+            
+            hooker.backupMethod = (Method) nativeHook(download, hooker, callback);
+            if (hooker.backupMethod != null) {
+                logStatic("  Hooked EuiccManager.downloadSubscription()");
+            } else {
+                logStatic("  Failed to hook EuiccManager.downloadSubscription()");
+            }
+        } catch (Throwable t) {
+            logStatic("  Failed to hook downloadSubscription(): " + t.getMessage());
         }
     }
 
@@ -366,61 +411,6 @@ public class HookEntry {
         }).start();
     }
 
-    private static void hookForActivationCode() throws Exception {
-        Method forActivationCode = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
-        Pine.hook(forActivationCode, new MethodHook() {
-            @Override
-            public void beforeCall(Pine.CallFrame callFrame) {
-                String code = (String) callFrame.args[0];
-                handleActivationCode(code);
-            }
-        });
-        logStatic("  Hooked DownloadableSubscription.forActivationCode()");
-    }
-
-    private static void hookEuiccManagerDownloadSubscription() {
-        try {
-            Class<?> euiccManagerClass = Class.forName("android.telephony.euicc.EuiccManager");
-            Method download = euiccManagerClass.getDeclaredMethod("downloadSubscription", 
-                DownloadableSubscription.class, boolean.class, PendingIntent.class);
-            
-            Pine.hook(download, new MethodHook() {
-                @Override
-                public void beforeCall(Pine.CallFrame callFrame) {
-                    logStatic("Intercepted EuiccManager.downloadSubscription()!");
-                    
-                    callFrame.setResult(null);
-
-                    try {
-                        DownloadableSubscription sub = (DownloadableSubscription) callFrame.args[0];
-                        if (sub != null) {
-                            String code = sub.getEncodedActivationCode();
-                            if (code != null) {
-                                handleActivationCode(code);
-                            }
-                        }
-                    } catch (Throwable t) {
-                        logStatic("Failed to extract code from subscription: " + t.getMessage());
-                    }
-
-                    PendingIntent callbackIntent = (PendingIntent) callFrame.args[2];
-                    if (callbackIntent != null) {
-                        try {
-                            Intent resultIntent = new Intent();
-                            callbackIntent.send(getApplicationContext(), 0, resultIntent);
-                            logStatic("Triggered success callback to app.");
-                        } catch (Exception e) {
-                            logStatic("Failed to send callback intent: " + e.getMessage());
-                        }
-                    }
-                }
-            });
-            logStatic("  Hooked EuiccManager.downloadSubscription()");
-        } catch (Throwable t) {
-            logStatic("  Failed to hook downloadSubscription(): " + t.getMessage());
-        }
-    }
-
     private static Context getApplicationContext() {
         if (sApplication != null) return sApplication;
         try {
@@ -458,7 +448,7 @@ public class HookEntry {
 
     private static void handleActivationCode(String code) {
         logStatic("========================================");
-        logStatic("eSIM DOWNLOAD INTERCEPTED (Pine)");
+        logStatic("eSIM DOWNLOAD INTERCEPTED (LSplant)");
         logStatic("  Activation Code: " + code);
         logStatic("========================================");
 

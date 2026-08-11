@@ -113,7 +113,6 @@ javac \
     -source 1.8 \
     -target 1.8 \
     -bootclasspath "$ANDROID_JAR" \
-    -cp "$MODULE_DIR/java/pine.jar" \
     -d "$BUILD_DIR/java" \
     "$MODULE_DIR/java/com/zygisksim/HookEntry.java"
 
@@ -121,8 +120,7 @@ javac \
 "$D8" \
     --output "$BUILD_DIR/dex" \
     --min-api 26 \
-    $(find "$BUILD_DIR/java" -name "*.class") \
-    "$MODULE_DIR/java/pine.jar"
+    $(find "$BUILD_DIR/java" -name "*.class")
 
 echo "DEX compilation complete"
 
@@ -146,16 +144,6 @@ echo "{}" > "$ZIP_ROOT/config.json"
 
 # Copy DEX payload
 cp "$BUILD_DIR/dex/classes.dex" "$ZIP_ROOT/"
-
-# Copy Pine native libraries into system paths so apps can access them
-mkdir -p "$ZIP_ROOT/system/lib"
-mkdir -p "$ZIP_ROOT/system/lib64"
-if [ -f "$MODULE_DIR/pine/armeabi-v7a/libpine.so" ]; then
-    cp "$MODULE_DIR/pine/armeabi-v7a/libpine.so" "$ZIP_ROOT/system/lib/"
-fi
-if [ -f "$MODULE_DIR/pine/arm64-v8a/libpine.so" ]; then
-    cp "$MODULE_DIR/pine/arm64-v8a/libpine.so" "$ZIP_ROOT/system/lib64/"
-fi
 
 # NOTE: esim_feature.xml system overlay removed — it caused com.android.phone
 # to crash by advertising eSIM hardware that doesn't exist system-wide.
