@@ -39,7 +39,7 @@ body {
   background: var(--bg-app);
   color: var(--text-main);
   min-height: 100vh;
-  padding-bottom: 90px;
+  padding-bottom: 95px;
 }
 
 /* App Header */
@@ -50,7 +50,7 @@ body {
   padding: 1.25rem 1.25rem 0.75rem 1.25rem;
   position: sticky;
   top: 0;
-  background: rgba(13, 13, 18, 0.92);
+  background: rgba(13, 13, 18, 0.95);
   backdrop-filter: blur(12px);
   z-index: 100;
   border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -65,6 +65,7 @@ body {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
@@ -115,6 +116,11 @@ body {
 .spoofer-card:hover {
   border-color: rgba(124, 58, 237, 0.4);
   background: var(--bg-card-hover);
+}
+
+.spoofer-card.flash {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.5);
 }
 
 .card-top {
@@ -241,6 +247,7 @@ body {
   border: 1px solid var(--border-card);
   border-radius: var(--radius-card);
   padding: 1.25rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
 
 .collapsible-header {
@@ -273,8 +280,9 @@ body {
   padding: 0.6rem 0.85rem;
   border-radius: 8px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: #cbd5e1;
+  border: 1px solid rgba(255,255,255,0.05);
 }
 
 .target-item span {
@@ -288,12 +296,17 @@ body {
   cursor: pointer;
   padding: 0 0.4rem;
   font-size: 1rem;
+  font-weight: bold;
+}
+
+.btn-del:hover {
+  color: #f87171;
 }
 
 .add-target-row {
   display: flex;
   gap: 0.5rem;
-  margin-top: 0.75rem;
+  margin-top: 0.85rem;
 }
 
 .add-target-input {
@@ -301,10 +314,10 @@ body {
   background: #0a0a0f;
   border: 1px solid var(--border-card);
   border-radius: 8px;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.75rem;
   color: #fff;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   outline: none;
 }
 
@@ -316,11 +329,16 @@ body {
   background: #2563eb;
   color: white;
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 0.55rem 1.1rem;
   border-radius: 8px;
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  font-weight: 700;
   cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-add:hover {
+  background: #3b82f6;
 }
 
 /* Floating Bottom Toolbar */
@@ -380,7 +398,7 @@ body {
   box-shadow: 0 6px 20px rgba(124, 58, 237, 0.7);
 }
 
-/* Toast */
+/* Toast Notification */
 .toast {
   position: fixed;
   bottom: 85px;
@@ -425,12 +443,12 @@ body {
     <div class="card-top">
       <span class="card-label">ANDROID ID</span>
       <label class="custom-checkbox">
-        <input type="checkbox" id="chk-android-id" checked>
+        <input type="checkbox" id="chk-android-id" checked onchange="syncConfigFromUI()">
         <span class="checkmark"></span>
       </label>
     </div>
     <div class="value-container">
-      <textarea id="val-android-id" class="value-input" rows="1" spellcheck="false">f5ff848873c1a17d</textarea>
+      <textarea id="val-android-id" class="value-input" rows="1" spellcheck="false" oninput="syncConfigFromUI()">f5ff848873c1a17d</textarea>
     </div>
     <div class="card-bottom">
       <button class="btn-random" onclick="randomizeField('android-id')">Random</button>
@@ -442,12 +460,12 @@ body {
     <div class="card-top">
       <span class="card-label">GSF ID</span>
       <label class="custom-checkbox">
-        <input type="checkbox" id="chk-gsf-id" checked>
+        <input type="checkbox" id="chk-gsf-id" checked onchange="syncConfigFromUI()">
         <span class="checkmark"></span>
       </label>
     </div>
     <div class="value-container">
-      <textarea id="val-gsf-id" class="value-input" rows="1" spellcheck="false">67db684e29db56a0</textarea>
+      <textarea id="val-gsf-id" class="value-input" rows="1" spellcheck="false" oninput="syncConfigFromUI()">67db684e29db56a0</textarea>
     </div>
     <div class="card-bottom">
       <button class="btn-random" onclick="randomizeField('gsf-id')">Random</button>
@@ -459,12 +477,12 @@ body {
     <div class="card-top">
       <span class="card-label">ADS ID</span>
       <label class="custom-checkbox">
-        <input type="checkbox" id="chk-ads-id" checked>
+        <input type="checkbox" id="chk-ads-id" checked onchange="syncConfigFromUI()">
         <span class="checkmark"></span>
       </label>
     </div>
     <div class="value-container">
-      <textarea id="val-ads-id" class="value-input" rows="2" spellcheck="false">c0725525-4660-4cd0-b3ea-c712e7adb543</textarea>
+      <textarea id="val-ads-id" class="value-input" rows="2" spellcheck="false" oninput="syncConfigFromUI()">c0725525-4660-4cd0-b3ea-c712e7adb543</textarea>
     </div>
     <div class="card-bottom">
       <button class="btn-random" onclick="randomizeField('ads-id')">Random</button>
@@ -476,12 +494,12 @@ body {
     <div class="card-top">
       <span class="card-label">APP SET ID</span>
       <label class="custom-checkbox">
-        <input type="checkbox" id="chk-app-set-id" checked>
+        <input type="checkbox" id="chk-app-set-id" checked onchange="syncConfigFromUI()">
         <span class="checkmark"></span>
       </label>
     </div>
     <div class="value-container">
-      <textarea id="val-app-set-id" class="value-input" rows="2" spellcheck="false">68939b1b-0bb8-47f7-880b-a95d60ef77d0</textarea>
+      <textarea id="val-app-set-id" class="value-input" rows="2" spellcheck="false" oninput="syncConfigFromUI()">68939b1b-0bb8-47f7-880b-a95d60ef77d0</textarea>
     </div>
     <div class="card-bottom">
       <button class="btn-random" onclick="randomizeField('app-set-id')">Random</button>
@@ -493,12 +511,12 @@ body {
     <div class="card-top">
       <span class="card-label">MEDIA DRM ID</span>
       <label class="custom-checkbox">
-        <input type="checkbox" id="chk-media-drm-id" checked>
+        <input type="checkbox" id="chk-media-drm-id" checked onchange="syncConfigFromUI()">
         <span class="checkmark"></span>
       </label>
     </div>
     <div class="value-container">
-      <textarea id="val-media-drm-id" class="value-input" rows="3" spellcheck="false">c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c</textarea>
+      <textarea id="val-media-drm-id" class="value-input" rows="3" spellcheck="false" oninput="syncConfigFromUI()">c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c</textarea>
     </div>
     <div class="card-bottom">
       <button class="btn-random" onclick="randomizeField('media-drm-id')">Random</button>
@@ -511,12 +529,12 @@ body {
       <span class="collapsible-title">🎯 Target Applications</span>
       <span id="target-toggle-icon" style="color: var(--text-muted);">▼</span>
     </div>
-    <div id="target-body" style="display: none;">
+    <div id="target-body" style="display: block;">
       <div class="target-list" id="target-list-container">
         <!-- Rendered dynamically -->
       </div>
       <div class="add-target-row">
-        <input type="text" id="new-target-input" class="add-target-input" placeholder="e.g. travel.eskimo.esim">
+        <input type="text" id="new-target-input" class="add-target-input" placeholder="e.g. travel.eskimo.esim" onkeydown="if(event.key==='Enter') addTargetApp()">
         <button class="btn-add" onclick="addTargetApp()">+ Add</button>
       </div>
     </div>
@@ -577,87 +595,144 @@ function randUUID() {
   });
 }
 
+function flashCard(cardId) {
+  const card = document.getElementById(cardId);
+  if (card) {
+    card.classList.add('flash');
+    setTimeout(() => card.classList.remove('flash'), 350);
+  }
+}
+
 function randomizeField(key) {
   if (key === 'android-id') {
-    document.getElementById('val-android-id').value = randHex(16);
+    const val = randHex(16);
+    document.getElementById('val-android-id').value = val;
+    currentConfig.android_id.value = val;
+    flashCard('card-android-id');
+    showToast("Randomized ANDROID ID");
   } else if (key === 'gsf-id') {
-    document.getElementById('val-gsf-id').value = randHex(16);
+    const val = randHex(16);
+    document.getElementById('val-gsf-id').value = val;
+    currentConfig.gsf_id.value = val;
+    flashCard('card-gsf-id');
+    showToast("Randomized GSF ID");
   } else if (key === 'ads-id') {
-    document.getElementById('val-ads-id').value = randUUID();
+    const val = randUUID();
+    document.getElementById('val-ads-id').value = val;
+    currentConfig.ads_id.value = val;
+    flashCard('card-ads-id');
+    showToast("Randomized ADS ID");
   } else if (key === 'app-set-id') {
-    document.getElementById('val-app-set-id').value = randUUID();
+    const val = randUUID();
+    document.getElementById('val-app-set-id').value = val;
+    currentConfig.app_set_id.value = val;
+    flashCard('card-app-set-id');
+    showToast("Randomized APP SET ID");
   } else if (key === 'media-drm-id') {
-    document.getElementById('val-media-drm-id').value = randHex(64);
+    const val = randHex(64);
+    document.getElementById('val-media-drm-id').value = val;
+    currentConfig.media_drm_id.value = val;
+    flashCard('card-media-drm-id');
+    showToast("Randomized MEDIA DRM ID");
   }
-  showToast(`Randomized ${key.replace(/-/g, ' ').toUpperCase()}`);
 }
 
 function randomizeAll() {
   if (document.getElementById('chk-android-id').checked) {
-    document.getElementById('val-android-id').value = randHex(16);
+    const val = randHex(16);
+    document.getElementById('val-android-id').value = val;
+    currentConfig.android_id.value = val;
+    flashCard('card-android-id');
   }
   if (document.getElementById('chk-gsf-id').checked) {
-    document.getElementById('val-gsf-id').value = randHex(16);
+    const val = randHex(16);
+    document.getElementById('val-gsf-id').value = val;
+    currentConfig.gsf_id.value = val;
+    flashCard('card-gsf-id');
   }
   if (document.getElementById('chk-ads-id').checked) {
-    document.getElementById('val-ads-id').value = randUUID();
+    const val = randUUID();
+    document.getElementById('val-ads-id').value = val;
+    currentConfig.ads_id.value = val;
+    flashCard('card-ads-id');
   }
   if (document.getElementById('chk-app-set-id').checked) {
-    document.getElementById('val-app-set-id').value = randUUID();
+    const val = randUUID();
+    document.getElementById('val-app-set-id').value = val;
+    currentConfig.app_set_id.value = val;
+    flashCard('card-app-set-id');
   }
   if (document.getElementById('chk-media-drm-id').checked) {
-    document.getElementById('val-media-drm-id').value = randHex(64);
+    const val = randHex(64);
+    document.getElementById('val-media-drm-id').value = val;
+    currentConfig.media_drm_id.value = val;
+    flashCard('card-media-drm-id');
   }
-  showToast("All active identifiers randomized!");
+  showToast("🎲 All active identifiers randomized!");
 }
 
 // UI Sync
 function syncUIFromConfig() {
-  document.getElementById('chk-android-id').checked = currentConfig.android_id.enabled;
-  document.getElementById('val-android-id').value = currentConfig.android_id.value;
-
-  document.getElementById('chk-gsf-id').checked = currentConfig.gsf_id.enabled;
-  document.getElementById('val-gsf-id').value = currentConfig.gsf_id.value;
-
-  document.getElementById('chk-ads-id').checked = currentConfig.ads_id.enabled;
-  document.getElementById('val-ads-id').value = currentConfig.ads_id.value;
-
-  document.getElementById('chk-app-set-id').checked = currentConfig.app_set_id.enabled;
-  document.getElementById('val-app-set-id').value = currentConfig.app_set_id.value;
-
-  document.getElementById('chk-media-drm-id').checked = currentConfig.media_drm_id.enabled;
-  document.getElementById('val-media-drm-id').value = currentConfig.media_drm_id.value;
+  if (currentConfig.android_id) {
+    document.getElementById('chk-android-id').checked = currentConfig.android_id.enabled !== false;
+    document.getElementById('val-android-id').value = currentConfig.android_id.value || "f5ff848873c1a17d";
+  }
+  if (currentConfig.gsf_id) {
+    document.getElementById('chk-gsf-id').checked = currentConfig.gsf_id.enabled !== false;
+    document.getElementById('val-gsf-id').value = currentConfig.gsf_id.value || "67db684e29db56a0";
+  }
+  if (currentConfig.ads_id) {
+    document.getElementById('chk-ads-id').checked = currentConfig.ads_id.enabled !== false;
+    document.getElementById('val-ads-id').value = currentConfig.ads_id.value || "c0725525-4660-4cd0-b3ea-c712e7adb543";
+  }
+  if (currentConfig.app_set_id) {
+    document.getElementById('chk-app-set-id').checked = currentConfig.app_set_id.enabled !== false;
+    document.getElementById('val-app-set-id').value = currentConfig.app_set_id.value || "68939b1b-0bb8-47f7-880b-a95d60ef77d0";
+  }
+  if (currentConfig.media_drm_id) {
+    document.getElementById('chk-media-drm-id').checked = currentConfig.media_drm_id.enabled !== false;
+    document.getElementById('val-media-drm-id').value = currentConfig.media_drm_id.value || "c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c";
+  }
 
   renderTargetList();
 }
 
 function syncConfigFromUI() {
-  currentConfig.android_id.enabled = document.getElementById('chk-android-id').checked;
-  currentConfig.android_id.value = document.getElementById('val-android-id').value.trim();
-
-  currentConfig.gsf_id.enabled = document.getElementById('chk-gsf-id').checked;
-  currentConfig.gsf_id.value = document.getElementById('val-gsf-id').value.trim();
-
-  currentConfig.ads_id.enabled = document.getElementById('chk-ads-id').checked;
-  currentConfig.ads_id.value = document.getElementById('val-ads-id').value.trim();
-
-  currentConfig.app_set_id.enabled = document.getElementById('chk-app-set-id').checked;
-  currentConfig.app_set_id.value = document.getElementById('val-app-set-id').value.trim();
-
-  currentConfig.media_drm_id.enabled = document.getElementById('chk-media-drm-id').checked;
-  currentConfig.media_drm_id.value = document.getElementById('val-media-drm-id').value.trim();
+  currentConfig.android_id = {
+    enabled: document.getElementById('chk-android-id').checked,
+    value: document.getElementById('val-android-id').value.trim()
+  };
+  currentConfig.gsf_id = {
+    enabled: document.getElementById('chk-gsf-id').checked,
+    value: document.getElementById('val-gsf-id').value.trim()
+  };
+  currentConfig.ads_id = {
+    enabled: document.getElementById('chk-ads-id').checked,
+    value: document.getElementById('val-ads-id').value.trim()
+  };
+  currentConfig.app_set_id = {
+    enabled: document.getElementById('chk-app-set-id').checked,
+    value: document.getElementById('val-app-set-id').value.trim()
+  };
+  currentConfig.media_drm_id = {
+    enabled: document.getElementById('chk-media-drm-id').checked,
+    value: document.getElementById('val-media-drm-id').value.trim()
+  };
 }
 
 // Target Apps Manager
 function renderTargetList() {
   const container = document.getElementById('target-list-container');
   container.innerHTML = '';
+  if (!currentConfig.targets || !Array.isArray(currentConfig.targets)) {
+    currentConfig.targets = [];
+  }
   currentConfig.targets.forEach((pkg, index) => {
     const item = document.createElement('div');
     item.className = 'target-item';
     item.innerHTML = `
       <span>${pkg}</span>
-      <button class="btn-del" onclick="removeTargetApp(${index})">✕</button>
+      <button class="btn-del" onclick="removeTargetApp(${index})" title="Remove">✕</button>
     `;
     container.appendChild(item);
   });
@@ -666,11 +741,16 @@ function renderTargetList() {
 function addTargetApp() {
   const input = document.getElementById('new-target-input');
   const val = input.value.trim();
-  if (val && !currentConfig.targets.includes(val)) {
-    currentConfig.targets.push(val);
-    renderTargetList();
-    input.value = '';
-    showToast(`Added ${val}`);
+  if (val) {
+    if (!currentConfig.targets.includes(val)) {
+      currentConfig.targets.push(val);
+      renderTargetList();
+      input.value = '';
+      showToast(`Added ${val}`);
+      saveConfiguration(); // Auto-save on adding
+    } else {
+      showToast(`Already exists: ${val}`);
+    }
   }
 }
 
@@ -678,6 +758,7 @@ function removeTargetApp(index) {
   const removed = currentConfig.targets.splice(index, 1);
   renderTargetList();
   showToast(`Removed ${removed}`);
+  saveConfiguration(); // Auto-save on removing
 }
 
 function toggleTargetList() {
@@ -692,35 +773,69 @@ function toggleTargetList() {
   }
 }
 
-// Root Bridge (KernelSU / APatch / Magisk WebUI)
-async function execCommand(cmd) {
-  if (window.ksu && window.ksu.exec) {
-    return new Promise((resolve) => {
-      window.ksu.exec(cmd, "{}", (code, stdout, stderr) => {
-        resolve({ code, stdout, stderr });
-      });
-    });
-  } else if (window.exec) {
+// =====================================================================
+// Universal Root Bridge (KernelSU, APatch, MMRL, Magisk)
+// =====================================================================
+
+async function rootExec(cmd) {
+  // 1. KernelSU / APatch
+  if (window.ksu && typeof window.ksu.exec === 'function') {
+    try {
+      let res;
+      if (window.ksu.exec.constructor.name === 'AsyncFunction' || window.ksu.exec.length === 1) {
+        res = await window.ksu.exec(cmd);
+      } else {
+        res = window.ksu.exec(cmd);
+        if (res instanceof Promise) res = await res;
+      }
+
+      if (typeof res === 'string') {
+        try {
+          const parsed = JSON.parse(res);
+          if (parsed && typeof parsed.stdout !== 'undefined') return parsed.stdout;
+        } catch (e) {}
+        return res;
+      } else if (res && typeof res.stdout !== 'undefined') {
+        return res.stdout;
+      }
+      return String(res || '');
+    } catch (err) {
+      console.warn("ksu.exec error:", err);
+    }
+  }
+
+  // 2. MMRL
+  if (window.mmrl && typeof window.mmrl.exec === 'function') {
+    try {
+      const res = await window.mmrl.exec(cmd);
+      return typeof res === 'string' ? res : (res && res.stdout ? res.stdout : '');
+    } catch (e) {}
+  }
+
+  // 3. Magisk WebUI
+  if (window.exec && typeof window.exec === 'function') {
     return new Promise((resolve) => {
       window.exec(cmd, (stdout, stderr) => {
-        resolve({ code: 0, stdout, stderr });
+        resolve(stdout || '');
       });
     });
   }
+
   return null;
 }
 
 async function loadConfiguration() {
   try {
-    const res = await execCommand(`cat "${CONFIG_PATH}"`);
-    if (res && res.stdout) {
-      currentConfig = JSON.parse(res.stdout);
+    const raw = await rootExec(`cat "${CONFIG_PATH}"`);
+    if (raw && raw.includes('"android_id"')) {
+      currentConfig = JSON.parse(raw);
+      console.log("Loaded config from module:", currentConfig);
     } else {
       const cached = localStorage.getItem('axespoofer_config');
       if (cached) currentConfig = JSON.parse(cached);
     }
   } catch (e) {
-    console.log("Using default configuration");
+    console.warn("Using default configuration:", e);
   }
   syncUIFromConfig();
 }
@@ -730,21 +845,35 @@ async function saveConfiguration() {
   const jsonStr = JSON.stringify(currentConfig, null, 2);
   localStorage.setItem('axespoofer_config', jsonStr);
 
+  // Base64 encode the JSON to avoid ANY shell escaping issues
+  const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
+  const writeCmd = `sh -c "echo '${b64}' | base64 -d > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH}"`;
+
   try {
-    const escaped = jsonStr.replace(/'/g, "'\\''");
-    const writeCmd = `echo '${escaped}' > "${CONFIG_PATH}" && chmod 644 "${CONFIG_PATH}"`;
-    await execCommand(writeCmd);
-    showToast("💾 Configuration Saved & Applied!");
+    await rootExec(writeCmd);
+    
+    // Verify by reading back
+    const verify = await rootExec(`cat "${CONFIG_PATH}"`);
+    if (verify && verify.includes('"android_id"')) {
+      showToast("💾 Saved to module successfully!");
+      if (window.ksu && typeof window.ksu.toast === 'function') {
+        window.ksu.toast("Axe Spoofer: Saved & Applied!");
+      }
+    } else {
+      showToast("💾 Saved locally!");
+    }
   } catch (e) {
-    showToast("Saved to browser storage");
+    showToast("💾 Saved to storage");
   }
 }
 
+let toastTimer;
 function showToast(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2200);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
 // Initialize on page load
