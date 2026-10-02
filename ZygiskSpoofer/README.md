@@ -1,6 +1,6 @@
-# Axe Spoofer — Universal Zygisk Identifier Spoofer
+# Zygisk Spoofer — Universal Zygisk Identifier Spoofer
 
-**Axe Spoofer** is a high-performance Zygisk module for Android (compatible with KernelSU, APatch, and Magisk) designed to spoof device identifiers for specific target applications.
+**Zygisk Spoofer** is a high-performance Zygisk module for Android (compatible with KernelSU, APatch, and Magisk) designed to spoof device identifiers for specific target applications.
 
 ---
 
@@ -19,7 +19,7 @@
 - **🎮 Action Button Integration**:
   - Click the **Action** button in KernelSU / APatch to instantly randomize all enabled identifiers.
 - **🌐 Built-in WebUI**:
-  - Sleek dark interface matching the Axe Spoofer design.
+  - Sleek dark interface matching the Zygisk Spoofer design.
   - Checkboxes, individual "Random" buttons, "Randomize All", and "Save & Apply".
   - Target application package management list.
 - **🎯 Precise Process Targeting**:
@@ -31,7 +31,7 @@
 ## 🏗️ Project Structure
 
 ```
-AxeSpoofer/
+ZygiskSpoofer/
 ├── build.sh                  # Build script (compiles DEX, C++ libs, packages flashable ZIP)
 ├── module/
 │   ├── module.prop           # Magisk / KernelSU module metadata
@@ -44,7 +44,7 @@ AxeSpoofer/
 │   │   ├── zygisk.hpp        # Zygisk API header
 │   │   └── main.cpp          # Zygisk native entry & Direct ART hook engine
 │   └── java/
-│       └── com/axespoofer/
+│       └── com/zygisksspoofer/
 │           └── HookEntry.java# Java hook implementation
 └── webui/
     └── index.html            # WebUI dashboard
@@ -66,9 +66,9 @@ chmod +x build.sh
 ./build.sh
 ```
 
-Output: `out/AxeSpoofer-v1.0.0.zip`
+Output: `out/ZygiskSpoofer-v1.0.0.zip`
 
 ### Installation
-1. Flash `AxeSpoofer-v1.0.0.zip` in **KernelSU**, **APatch**, or **Magisk**.
+1. Flash `ZygiskSpoofer-v1.0.0.zip` in **KernelSU**, **APatch**, or **Magisk**.
 2. Reboot device.
 3. Open the **Action** button or WebUI in your manager to configure and randomize identifiers.

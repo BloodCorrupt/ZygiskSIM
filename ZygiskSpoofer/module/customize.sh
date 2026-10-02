@@ -1,11 +1,11 @@
 #!/system/bin/sh
-# Axe Spoofer Installer
+# Zygisk Spoofer Installer
 # Compatible with: KernelSU, APatch, Magisk (via Zygisk / ZygiskNext)
 
 SKIPUNZIP=0
 
 ui_print "================================================"
-ui_print "           Axe Spoofer - Zygisk Module"
+ui_print "          Zygisk Spoofer - Module"
 ui_print "================================================"
 ui_print ""
 
@@ -28,9 +28,9 @@ fi
 ui_print ""
 
 # 2. Preserve existing config.json if present
-if [ -f "/data/adb/modules/axespoofer/config.json" ]; then
-    ui_print "- Preserving existing Axe Spoofer config.json"
-    cp -f "/data/adb/modules/axespoofer/config.json" "$MODPATH/config.json"
+if [ -f "/data/adb/modules/zygisksspoofer/config.json" ]; then
+    ui_print "- Preserving existing Zygisk Spoofer config.json"
+    cp -f "/data/adb/modules/zygisksspoofer/config.json" "$MODPATH/config.json"
 fi
 
 # 3. Architecture check
@@ -45,12 +45,12 @@ if [ -f "$MODPATH/service.sh" ]; then
 fi
 
 # 5. Create log directory
-mkdir -p /data/adb/modules/axespoofer/logs
-chmod 0777 /data/adb/modules/axespoofer/logs
+mkdir -p /data/adb/modules/zygisksspoofer/logs
+chmod 0777 /data/adb/modules/zygisksspoofer/logs
 
 ui_print ""
 ui_print "================================================"
-ui_print " Axe Spoofer installed successfully!"
+ui_print " Zygisk Spoofer installed successfully!"
 ui_print " Use the Action button in Manager or WebUI"
 ui_print " to randomize / configure device identifiers."
 ui_print "================================================"

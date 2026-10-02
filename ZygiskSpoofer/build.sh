@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Axe Spoofer Build Script
+# Zygisk Spoofer Build Script
 #
 # Prerequisites:
 #   - Android NDK (set ANDROID_NDK_HOME or NDK_HOME)
@@ -12,7 +12,7 @@
 #   chmod +x build.sh
 #   ./build.sh
 #
-# Output: out/AxeSpoofer-v1.0.0.zip (flashable Magisk / KernelSU / APatch module)
+# Output: out/ZygiskSpoofer-v1.0.0.zip (flashable Magisk / KernelSU / APatch module)
 #
 
 set -e
@@ -23,7 +23,7 @@ BUILD_DIR="$SCRIPT_DIR/build"
 OUT_DIR="$SCRIPT_DIR/out"
 
 MODULE_VERSION="v1.0.0"
-MODULE_NAME="AxeSpoofer"
+MODULE_NAME="ZygiskSpoofer"
 ZIP_NAME="${MODULE_NAME}-${MODULE_VERSION}.zip"
 
 echo "================================================"
@@ -137,7 +137,10 @@ echo "=== Compiling native C++ Zygisk libraries ==="
 
 # Copy compiled native libraries to Magisk zygisk/ layout
 for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-    if [ -f "$BUILD_DIR/libs/$abi/libaxespoofer.so" ]; then
+    if [ -f "$BUILD_DIR/libs/$abi/libzygisksspoofer.so" ]; then
+        cp "$BUILD_DIR/libs/$abi/libzygisksspoofer.so" "$BUILD_DIR/zygisk/$abi.so"
+        echo "Packaged zygisk/$abi.so"
+    elif [ -f "$BUILD_DIR/libs/$abi/libaxespoofer.so" ]; then
         cp "$BUILD_DIR/libs/$abi/libaxespoofer.so" "$BUILD_DIR/zygisk/$abi.so"
         echo "Packaged zygisk/$abi.so"
     fi

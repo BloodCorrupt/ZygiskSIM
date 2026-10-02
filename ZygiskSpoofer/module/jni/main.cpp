@@ -1,5 +1,5 @@
 /*
- * Axe Spoofer - Universal Zygisk Device Identifier Spoofer
+ * Zygisk Spoofer - Universal Zygisk Device Identifier Spoofer
  *
  * Targets specific apps to spoof:
  *   1. Android ID (Settings.Secure.ANDROID_ID)
@@ -23,7 +23,7 @@
 
 #include "zygisk.hpp"
 
-#define LOG_TAG "AxeSpoofer"
+#define LOG_TAG "ZygiskSpoofer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -69,7 +69,7 @@ static bool is_target_process(const char *package_name) {
 }
 
 // Global configuration storage
-static char g_log_dir[512] = "/data/adb/modules/axespoofer/logs";
+static char g_log_dir[512] = "/data/adb/modules/zygisksspoofer/logs";
 static char g_android_id[64] = "f5ff848873c1a17d";
 static bool g_android_id_enabled = true;
 static char g_media_drm_id[128] = "c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c";
@@ -412,17 +412,17 @@ static void send_file(int socket_fd, const char *path) {
 
 static void companion_handler(int fd) {
     // 1. Send classes.dex
-    send_file(fd, "/data/adb/modules/axespoofer/classes.dex");
+    send_file(fd, "/data/adb/modules/zygisksspoofer/classes.dex");
 
     // 2. Send config.json
-    send_file(fd, "/data/adb/modules/axespoofer/config.json");
+    send_file(fd, "/data/adb/modules/zygisksspoofer/config.json");
 }
 
 // =====================================================================
 // Zygisk module class
 // =====================================================================
 
-class AxeSpooferModule : public zygisk::ModuleBase {
+class ZygiskSpooferModule : public zygisk::ModuleBase {
 public:
     void onLoad(zygisk::Api *api, JNIEnv *env) override {
         this->api = api;
@@ -442,7 +442,7 @@ public:
             return;
         }
 
-        LOGI("Target process detected: %s — loading Axe Spoofer payloads", raw_name);
+        LOGI("Target process detected: %s — loading Zygisk Spoofer payloads", raw_name);
 
         strncpy(package_name, raw_name, sizeof(package_name) - 1);
         package_name[sizeof(package_name) - 1] = '\0';
@@ -503,7 +503,7 @@ public:
             return;
         }
 
-        LOGI("Initializing Axe Spoofer for target app %s...", package_name);
+        LOGI("Initializing Zygisk Spoofer for target app %s...", package_name);
 
         // Step 1: Load DEX via InMemoryDexClassLoader
         jobject dex_buffer = env->NewDirectByteBuffer(dex_data, dex_size);
@@ -537,12 +537,12 @@ public:
         jmethodID load_class = env->GetMethodID(
             env->GetObjectClass(dex_cl), "loadClass",
             "(Ljava/lang/String;)Ljava/lang/Class;");
-        jstring class_name = env->NewStringUTF("com.axespoofer.HookEntry");
+        jstring class_name = env->NewStringUTF("com.zygisksspoofer.HookEntry");
         jclass hook_class = static_cast<jclass>(
             env->CallObjectMethod(dex_cl, load_class, class_name));
 
         if (hook_class == nullptr) {
-            LOGE("Failed to load com.axespoofer.HookEntry class from DEX");
+            LOGE("Failed to load com.zygisksspoofer.HookEntry class from DEX");
             if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
             return;
         }
@@ -563,9 +563,9 @@ public:
         // Step 3: Call HookEntry.init(logDir, configJson)
         char log_dir[512];
         if (app_data_dir[0] != '\0') {
-            snprintf(log_dir, sizeof(log_dir), "%s/cache/axespoofer_logs", app_data_dir);
+            snprintf(log_dir, sizeof(log_dir), "%s/cache/zygisksspoofer_logs", app_data_dir);
         } else {
-            snprintf(log_dir, sizeof(log_dir), "/data/adb/modules/axespoofer/logs");
+            snprintf(log_dir, sizeof(log_dir), "/data/adb/modules/zygisksspoofer/logs");
         }
         strncpy(g_log_dir, log_dir, sizeof(g_log_dir) - 1);
 
@@ -587,11 +587,11 @@ public:
         env->CallStaticVoidMethod(hook_class, init_method, j_log_dir, j_config);
 
         if (env->ExceptionCheck()) {
-            LOGE("Exception during AxeSpoofer HookEntry.init() — clearing to prevent crash");
+            LOGE("Exception during Zygisk Spoofer HookEntry.init() — clearing to prevent crash");
             env->ExceptionDescribe();
             env->ExceptionClear();
         } else {
-            LOGI("Axe Spoofer initialization complete for %s", package_name);
+            LOGI("Zygisk Spoofer initialization complete for %s", package_name);
         }
 
         if (config_data) { free(config_data); config_data = nullptr; }
@@ -608,5 +608,5 @@ private:
     char app_data_dir[512] = {};
 };
 
-REGISTER_ZYGISK_MODULE(AxeSpooferModule)
+REGISTER_ZYGISK_MODULE(ZygiskSpooferModule)
 REGISTER_ZYGISK_COMPANION(companion_handler)

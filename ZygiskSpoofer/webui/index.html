@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Axe Spoofer</title>
+<title>Zygisk Spoofer</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -430,7 +430,7 @@ body {
 <body>
 
 <header class="app-header">
-  <div class="app-title">Axe Spoofer</div>
+  <div class="app-title">Zygisk Spoofer</div>
   <div class="header-actions">
     <button class="icon-btn" onclick="randomizeAll()" title="Randomize All">🎲</button>
   </div>
@@ -557,7 +557,7 @@ body {
 <div class="toast" id="toast">Saved successfully!</div>
 
 <script>
-const CONFIG_PATH = "/data/adb/modules/axespoofer/config.json";
+const CONFIG_PATH = "/data/adb/modules/zygisksspoofer/config.json";
 
 let currentConfig = {
   enabled: true,
@@ -831,7 +831,7 @@ async function loadConfiguration() {
       currentConfig = JSON.parse(raw);
       console.log("Loaded config from module:", currentConfig);
     } else {
-      const cached = localStorage.getItem('axespoofer_config');
+      const cached = localStorage.getItem('zygisksspoofer_config');
       if (cached) currentConfig = JSON.parse(cached);
     }
   } catch (e) {
@@ -843,7 +843,7 @@ async function loadConfiguration() {
 async function saveConfiguration() {
   syncConfigFromUI();
   const jsonStr = JSON.stringify(currentConfig, null, 2);
-  localStorage.setItem('axespoofer_config', jsonStr);
+  localStorage.setItem('zygisksspoofer_config', jsonStr);
 
   // Base64 encode the JSON to avoid ANY shell escaping issues
   const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
@@ -857,7 +857,7 @@ async function saveConfiguration() {
     if (verify && verify.includes('"android_id"')) {
       showToast("💾 Saved to module successfully!");
       if (window.ksu && typeof window.ksu.toast === 'function') {
-        window.ksu.toast("Axe Spoofer: Saved & Applied!");
+        window.ksu.toast("Zygisk Spoofer: Saved & Applied!");
       }
     } else {
       showToast("💾 Saved locally!");

@@ -1,8 +1,8 @@
 #!/system/bin/sh
-# Axe Spoofer — Action button script (KernelSU / APatch / Magisk)
+# Zygisk Spoofer — Action button script (KernelSU / APatch / Magisk)
 # Generates new random values for all enabled identifiers
 
-MODDIR="/data/adb/modules/axespoofer"
+MODDIR="/data/adb/modules/zygisksspoofer"
 CONFIG_FILE="${MODDIR}/config.json"
 
 if [ ! -d "${MODDIR}" ]; then
@@ -118,7 +118,7 @@ fi
 
 chmod 644 "${CONFIG_FILE}"
 
-echo "[Axe Spoofer] Action executed: IDs randomized successfully!"
+echo "[Zygisk Spoofer] Action executed: IDs randomized successfully!"
 echo "  Android ID:   ${NEW_ANDROID_ID}"
 echo "  GSF ID:       ${NEW_GSF_ID}"
 echo "  Ads ID:       ${NEW_ADS_ID}"

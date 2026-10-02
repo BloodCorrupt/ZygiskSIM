@@ -1,4 +1,4 @@
-package com.axespoofer;
+package com.zygisksspoofer;
 
 import android.content.ContentResolver;
 import android.content.Context;
@@ -26,7 +26,7 @@ import java.util.Locale;
 import org.json.JSONObject;
 
 /**
- * Axe Spoofer — Java Hook Payload
+ * Zygisk Spoofer — Java Hook Payload
  * Spoofs:
  *   1. ANDROID ID (Settings.Secure.ANDROID_ID)
  *   2. GSF ID (Google Services Framework ID via ContentResolver)
@@ -36,7 +36,7 @@ import org.json.JSONObject;
  */
 public class HookEntry {
 
-    private static final String TAG = "AxeSpoofer";
+    private static final String TAG = "ZygiskSpoofer";
     private static String sLogDir = null;
 
     // Active spoof values & toggles
@@ -73,7 +73,7 @@ public class HookEntry {
     public static void init(String logDir, String configJson) {
         sLogDir = logDir;
         log("========================================");
-        log("Axe Spoofer Java payload initializing...");
+        log("Zygisk Spoofer Java payload initializing...");
         log("========================================");
 
         // 1. Parse config.json
@@ -104,7 +104,7 @@ public class HookEntry {
         // 6. Install GSF ID & GMS AppSet/Ads Hooks (ContentResolver + Dynamic class loading)
         installDynamicAndGmsHooks();
 
-        log("Axe Spoofer initialization complete.");
+        log("Zygisk Spoofer initialization complete.");
     }
 
     // =====================================================================
