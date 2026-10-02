@@ -351,7 +351,7 @@ public class HookEntry {
                     // Also patch ApplicationPackageManager.mPM once Application is ready
                     for (int i = 0; i < 50; i++) {
                         Thread.sleep(100);
-                        Application app = getApplicationContext();
+                        Context app = getApplicationContext();
                         if (app != null) {
                             try {
                                 android.content.pm.PackageManager pm = app.getPackageManager();
