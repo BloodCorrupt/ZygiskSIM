@@ -247,15 +247,12 @@ static jboolean JNICALL native_hook_method(
         init_art_offsets(env, hook_method, target_method);
     }
 
-    // Unprotect memory pages
-    if (mprotect((void*)PAGE_START(target_art), PAGE_SIZE * 2, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+    // Make target ArtMethod memory page writable (PROT_READ | PROT_WRITE, NEVER PROT_EXEC to avoid VMA splitting GC crash)
+    if (mprotect((void*)PAGE_START(target_art), PAGE_SIZE * 2, PROT_READ | PROT_WRITE) != 0) {
         LOGE("native_hook_method: mprotect target failed: %s", strerror(errno));
     }
-    if (mprotect((void*)PAGE_START(hook_art), PAGE_SIZE * 2, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        LOGE("native_hook_method: mprotect hook failed: %s", strerror(errno));
-    }
 
-    // Read hook JNI entry point and quick compiled code entry point
+    // Read hook JNI entry point and quick compiled code entry point (hook_art is already readable, DO NOT mprotect it)
     void *hook_jni = *(void**)((char*)hook_art + g_offset_jni);
     void *hook_quick = *(void**)((char*)hook_art + g_offset_quick_code);
 
