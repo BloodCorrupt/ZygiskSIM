@@ -36,7 +36,11 @@ import top.canyie.pine.callback.MethodHook;
 
 /**
  * Entry point for ZygiskSIM.
- * Supports Pine ART hooking on ARM/ARM64 and Real Binder / ServiceManager / Dynamic Proxy mocks on x86/x86_64 emulators.
+ * Supports:
+ *   1. Direct ART Method Hooks (Universal for x86, x86_64, ARM, ARM64)
+ *   2. Real Binder & ServiceManager.sCache mocks
+ *   3. Dynamic IPackageManager proxies (hasSystemFeature)
+ *   4. Pine ART method hooking (on ARM when available)
  */
 public class HookEntry {
 
@@ -53,11 +57,29 @@ public class HookEntry {
     private static String sSpoofBrand = "google";
     private static String sSpoofProduct = "shiba";
 
+    // =====================================================================
+    // Native ART Hook Declarations (Registered by JNI in main.cpp)
+    // =====================================================================
+
+    public static native boolean nativeHookMethod(Method target, Method hook);
+    public static native void nativeProbeOffsets(Method m1, Method m2);
+    public static native boolean hook_native_isEnabled(Object thiz);
+    public static native String hook_native_getEid(Object thiz);
+    public static native Object hook_native_getEuiccInfo(Object thiz);
+    public static native Object hook_native_forActivationCode(String code);
+    public static native void hook_native_downloadSubscription(Object thiz, Object sub, boolean switchAfterDownload, Object callbackIntent);
+    public static native int hook_native_getCardIdForDefaultEuicc(Object thiz);
+
+    public static class ProbeHelper {
+        public static void probe1() {}
+        public static void probe2() {}
+    }
+
     public static void init(String logDir, String pineLibPath, String configJson) {
         sLogDir = logDir;
         logStatic("ZygiskSIM Java payload initializing...");
 
-        // 1. Parse config.json if provided
+        // 1. Parse config.json
         parseConfig(configJson);
 
         logStatic("Active Engine: " + sEngine + " (Arch: " + sArch + ")");
@@ -65,19 +87,22 @@ public class HookEntry {
         // 2. Spoof device identity (pure reflection, works on all architectures)
         spoofBuildFields();
 
-        // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime in Java
+        // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime
         bypassHiddenApiRestrictions();
 
-        // 4. Install IEuiccController real Binder mock into ServiceManager.sCache thread-safely
+        // 4. Install Direct ART Method Hooks (x86, x86_64, ARM, ARM64)
+        installDirectArtMethodHooks();
+
+        // 5. Install IEuiccController real Binder mock into ServiceManager.sCache
         installEuiccServiceMock();
 
-        // 5. Install early PackageManager proxy SYNCHRONOUSLY (pre-empts ActivityThread)
+        // 6. Install early PackageManager proxy (pre-empts ActivityThread)
         installEarlyPackageManagerProxy();
 
-        // 6. Background safety-net: patch ApplicationPackageManager.mPM once app starts
+        // 7. Background safety-net: patch ApplicationPackageManager.mPM once app starts
         startBackgroundPackageManagerPatch();
 
-        // 7. If Pine engine is active (on ARM) and library path is provided:
+        // 8. If Pine engine is active (on ARM) and library path is provided:
         if (!"dobby".equalsIgnoreCase(sEngine) && pineLibPath != null && !pineLibPath.trim().isEmpty()) {
             try {
                 disablePineNativeHiddenApiBypass();
@@ -86,11 +111,99 @@ public class HookEntry {
                 logStatic("Pine ART hooks installed successfully (Pine Mode).");
             } catch (Throwable t) {
                 logStatic("Pine library load failed: " + t.getMessage());
-                logStatic("Continuing with ServiceManager & Real Binder mocks.");
+                logStatic("Continuing with Direct ART & ServiceManager mocks.");
             }
         } else {
-            logStatic("Running in Dobby / x86_64 mode (Pine omitted). Java dynamic proxies & Real Binder mocks active.");
+            logStatic("Running in Direct ART / Dobby / x86_64 mode.");
         }
+    }
+
+    // =====================================================================
+    // Direct ART Method Hooking (Universal)
+    // =====================================================================
+
+    private static void installDirectArtMethodHooks() {
+        logStatic("Installing Universal Direct ART Method Hooks...");
+
+        // Probe ArtMethod struct size
+        try {
+            Method m1 = ProbeHelper.class.getDeclaredMethod("probe1");
+            Method m2 = ProbeHelper.class.getDeclaredMethod("probe2");
+            nativeProbeOffsets(m1, m2);
+        } catch (Throwable t) {
+            logStatic("Offset probing warning: " + t.getMessage());
+        }
+
+        // 1. EuiccManager.isEnabled()
+        try {
+            Method target = EuiccManager.class.getDeclaredMethod("isEnabled");
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_isEnabled", Object.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: EuiccManager.isEnabled() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.isEnabled() hook note: " + t.getMessage());
+        }
+
+        // 2. EuiccManager.getEid()
+        try {
+            Method target = EuiccManager.class.getDeclaredMethod("getEid");
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEid", Object.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: EuiccManager.getEid() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.getEid() hook note: " + t.getMessage());
+        }
+
+        // 3. EuiccManager.getEuiccInfo()
+        try {
+            Method target = EuiccManager.class.getDeclaredMethod("getEuiccInfo");
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEuiccInfo", Object.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: EuiccManager.getEuiccInfo() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.getEuiccInfo() not found on this API level");
+        }
+
+        // 4. DownloadableSubscription.forActivationCode(String)
+        try {
+            Method target = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_forActivationCode", String.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: DownloadableSubscription.forActivationCode() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  DownloadableSubscription.forActivationCode() hook note: " + t.getMessage());
+        }
+
+        // 5. EuiccManager.downloadSubscription(...)
+        try {
+            Method target = EuiccManager.class.getDeclaredMethod("downloadSubscription",
+                    DownloadableSubscription.class, boolean.class, PendingIntent.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_downloadSubscription",
+                    Object.class, Object.class, boolean.class, Object.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: EuiccManager.downloadSubscription() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  EuiccManager.downloadSubscription() hook note: " + t.getMessage());
+        }
+
+        // 6. TelephonyManager.getCardIdForDefaultEuicc()
+        try {
+            Class<?> tmClass = Class.forName("android.telephony.TelephonyManager");
+            Method target = tmClass.getDeclaredMethod("getCardIdForDefaultEuicc");
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getCardIdForDefaultEuicc", Object.class);
+            if (nativeHookMethod(target, hook)) {
+                logStatic("  Direct ART Hook: TelephonyManager.getCardIdForDefaultEuicc() -> SUCCESS");
+            }
+        } catch (Throwable t) {
+            logStatic("  TelephonyManager.getCardIdForDefaultEuicc() hook note: " + t.getMessage());
+        }
+
+        logStatic("Universal Direct ART Method Hooks installation complete.");
     }
 
     private static void bypassHiddenApiRestrictions() {
@@ -109,7 +222,7 @@ public class HookEntry {
     private static void disablePineNativeHiddenApiBypass() {
         try {
             Class<?> pineConfigClass = Class.forName("top.canyie.pine.PineConfig");
-            
+
             Field f1 = pineConfigClass.getDeclaredField("disableHiddenApiPolicy");
             f1.setAccessible(true);
             f1.setBoolean(null, true);
@@ -227,7 +340,7 @@ public class HookEntry {
     }
 
     // =====================================================================
-    // ServiceManager & IEuiccController Mock Injection (All Architectures)
+    // ServiceManager & IEuiccController Mock Injection
     // =====================================================================
 
     private static void installEuiccServiceMock() {
@@ -240,7 +353,6 @@ public class HookEntry {
 
             final MockEuiccBinder realBinder = new MockEuiccBinder("com.android.internal.telephony.euicc.IEuiccController", mockController);
 
-            // Inject real Binder into ServiceManager.sCache thread-safely
             try {
                 Class<?> smClass = Class.forName("android.os.ServiceManager");
                 Field sCacheField = smClass.getDeclaredField("sCache");
@@ -292,12 +404,9 @@ public class HookEntry {
                     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                         String name = method.getName();
 
-                        // --- IInterface methods ---
                         if ("asBinder".equals(name)) {
                             return new MockEuiccBinder("com.android.internal.telephony.euicc.IEuiccController", proxy);
                         }
-
-                        // --- IEuiccController methods ---
                         if ("isEnabled".equals(name)) {
                             logStatic("Spoofed IEuiccController.isEnabled() -> true");
                             return Boolean.TRUE;
@@ -361,7 +470,6 @@ public class HookEntry {
                             return null;
                         }
 
-                        // Default primitive types
                         Class<?> returnType = method.getReturnType();
                         if (returnType == boolean.class || returnType == Boolean.class) {
                             return Boolean.TRUE;
@@ -383,7 +491,7 @@ public class HookEntry {
     }
 
     // =====================================================================
-    // PackageManager Dynamic Proxy (All Architectures)
+    // PackageManager Dynamic Proxy
     // =====================================================================
 
     private static Object createPackageManagerProxy(final Object originalPm) {
@@ -418,13 +526,6 @@ public class HookEntry {
         }
     }
 
-    /**
-     * Pre-emptively sets ActivityThread.sPackageManager to our proxy BEFORE the app runs.
-     * Since postAppSpecialize runs before ActivityThread.main(), sPackageManager is null.
-     * By setting it to our proxy now, ActivityThread.getPackageManager() will find it
-     * non-null and return our proxy directly — the real PM is never set by the framework.
-     * Our proxy lazily resolves the real IPackageManager via ServiceManager for delegation.
-     */
     private static void installEarlyPackageManagerProxy() {
         try {
             Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
@@ -443,7 +544,6 @@ public class HookEntry {
                     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                         String name = method.getName();
 
-                        // Intercept hasSystemFeature for euicc
                         if ("hasSystemFeature".equals(name) && args != null && args.length > 0) {
                             if ("android.hardware.telephony.euicc".equals(args[0])) {
                                 logStatic("Intercepted hasSystemFeature(euicc) -> true");
@@ -451,7 +551,6 @@ public class HookEntry {
                             }
                         }
 
-                        // Handle asBinder - delegate to real PM or return dummy
                         if ("asBinder".equals(name)) {
                             Object real = resolveRealPm(realPmHolder);
                             if (real != null) {
@@ -464,7 +563,6 @@ public class HookEntry {
                             return new Binder();
                         }
 
-                        // For all other methods, delegate to the real PackageManager
                         Object realPm = resolveRealPm(realPmHolder);
                         if (realPm != null) {
                             try {
@@ -474,7 +572,6 @@ public class HookEntry {
                             }
                         }
 
-                        // Real PM not available yet - return safe defaults
                         Class<?> returnType = method.getReturnType();
                         if (returnType == boolean.class || returnType == Boolean.class) return Boolean.FALSE;
                         if (returnType == int.class || returnType == Integer.class) return Integer.valueOf(0);
@@ -490,15 +587,9 @@ public class HookEntry {
         } catch (Throwable t) {
             logStatic("Failed to install early PackageManager proxy: " + t.getMessage());
             logStackTrace(t);
-            // Fallback to the old polling approach
-            hookPackageManagerFallback();
         }
     }
 
-    /**
-     * Lazily resolves the real IPackageManager via ServiceManager.
-     * Called by the early proxy when it needs to delegate a method call.
-     */
     private static Object resolveRealPm(Object[] holder) {
         if (holder[0] != null && !Proxy.isProxyClass(holder[0].getClass())) {
             return holder[0];
@@ -520,10 +611,6 @@ public class HookEntry {
         return null;
     }
 
-    /**
-     * Background safety-net: once the Application is created, patch its
-     * ApplicationPackageManager.mPM field with our proxy to cover any cached references.
-     */
     private static void startBackgroundPackageManagerPatch() {
         new Thread(new Runnable() {
             @Override
@@ -548,8 +635,6 @@ public class HookEntry {
                                         Object mockPm = createPackageManagerProxy(currentMPM);
                                         mPMField.set(pm, mockPm);
                                         logStatic("Background: patched ApplicationPackageManager.mPM");
-                                    } else {
-                                        logStatic("Background: mPM already proxied (early proxy working)");
                                     }
                                 }
                             } catch (Throwable t) {
@@ -560,34 +645,6 @@ public class HookEntry {
                     }
                 } catch (Throwable t) {
                     logStatic("Background PM patch error: " + t.getMessage());
-                }
-            }
-        }).start();
-    }
-
-    /**
-     * Fallback: polling-based replacement of sPackageManager (used if early proxy fails).
-     */
-    private static void hookPackageManagerFallback() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-                    Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-                    sPackageManagerField.setAccessible(true);
-                    for (int i = 0; i < 200; i++) {
-                        Object originalPm = sPackageManagerField.get(null);
-                        if (originalPm != null && !Proxy.isProxyClass(originalPm.getClass())) {
-                            Object mockPm = createPackageManagerProxy(originalPm);
-                            sPackageManagerField.set(null, mockPm);
-                            logStatic("Fallback: replaced sPackageManager with proxy.");
-                            break;
-                        }
-                        Thread.sleep(100);
-                    }
-                } catch (Throwable t) {
-                    logStatic("Fallback sPackageManager override failed: " + t.getMessage());
                 }
             }
         }).start();
