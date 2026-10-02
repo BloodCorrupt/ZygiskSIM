@@ -79,10 +79,15 @@ static bool g_media_drm_id_enabled = true;
 static void parse_native_config(const char *cfg_str) {
     if (cfg_str == nullptr || strlen(cfg_str) == 0) return;
 
-    // Extract android_id value
+    // Extract android_id
     const char *aid_key = "\"android_id\"";
     const char *p = strstr(cfg_str, aid_key);
     if (p) {
+        const char *en_key = "\"enabled\":";
+        const char *ep = strstr(p, en_key);
+        if (ep && ep < p + 60) {
+            g_android_id_enabled = (strstr(ep + strlen(en_key), "false") == nullptr);
+        }
         const char *val_key = "\"value\":";
         const char *vp = strstr(p, val_key);
         if (vp) {
@@ -96,10 +101,15 @@ static void parse_native_config(const char *cfg_str) {
         }
     }
 
-    // Extract media_drm_id value
+    // Extract media_drm_id
     const char *drm_key = "\"media_drm_id\"";
     p = strstr(cfg_str, drm_key);
     if (p) {
+        const char *en_key = "\"enabled\":";
+        const char *ep = strstr(p, en_key);
+        if (ep && ep < p + 60) {
+            g_media_drm_id_enabled = (strstr(ep + strlen(en_key), "false") == nullptr);
+        }
         const char *val_key = "\"value\":";
         const char *vp = strstr(p, val_key);
         if (vp) {
@@ -113,7 +123,9 @@ static void parse_native_config(const char *cfg_str) {
         }
     }
 
-    LOGI("Native config parsed - Android ID: %s, Media DRM ID: %s", g_android_id, g_media_drm_id);
+    LOGI("Native config parsed - Android ID: [%s] %s, Media DRM ID: [%s] %s",
+         g_android_id_enabled ? "ON" : "OFF", g_android_id,
+         g_media_drm_id_enabled ? "ON" : "OFF", g_media_drm_id);
 }
 
 // =====================================================================
@@ -275,7 +287,7 @@ static jbyteArray hex_to_byte_array(JNIEnv *env, const char *hex_str) {
 // Static: Settings.Secure.getString(ContentResolver resolver, String name) -> (JNIEnv*, jclass, jobject, jstring)
 static jstring JNICALL hook_native_getString(
     JNIEnv *env, [[maybe_unused]] jclass clazz, [[maybe_unused]] jobject resolver, jstring name) {
-    if (name != nullptr) {
+    if (g_android_id_enabled && name != nullptr) {
         const char *name_str = env->GetStringUTFChars(name, nullptr);
         if (name_str != nullptr) {
             if (strcmp(name_str, "android_id") == 0) {
@@ -292,7 +304,7 @@ static jstring JNICALL hook_native_getString(
 // Static: Settings.Secure.getStringForUser(ContentResolver resolver, String name, int userHandle)
 static jstring JNICALL hook_native_getStringForUser(
     JNIEnv *env, [[maybe_unused]] jclass clazz, [[maybe_unused]] jobject resolver, jstring name, [[maybe_unused]] jint user_handle) {
-    if (name != nullptr) {
+    if (g_android_id_enabled && name != nullptr) {
         const char *name_str = env->GetStringUTFChars(name, nullptr);
         if (name_str != nullptr) {
             if (strcmp(name_str, "android_id") == 0) {
@@ -309,7 +321,7 @@ static jstring JNICALL hook_native_getStringForUser(
 // Non-static: MediaDrm.getPropertyByteArray(String propertyName) -> (JNIEnv*, jobject, jstring)
 static jbyteArray JNICALL hook_native_getPropertyByteArray(
     JNIEnv *env, [[maybe_unused]] jobject thiz, jstring prop_name) {
-    if (prop_name != nullptr) {
+    if (g_media_drm_id_enabled && prop_name != nullptr) {
         const char *prop_str = env->GetStringUTFChars(prop_name, nullptr);
         if (prop_str != nullptr) {
             if (strcmp(prop_str, "deviceUniqueId") == 0 ||
@@ -327,7 +339,7 @@ static jbyteArray JNICALL hook_native_getPropertyByteArray(
 // Non-static: MediaDrm.getPropertyString(String propertyName) -> (JNIEnv*, jobject, jstring)
 static jstring JNICALL hook_native_getPropertyString(
     JNIEnv *env, [[maybe_unused]] jobject thiz, jstring prop_name) {
-    if (prop_name != nullptr) {
+    if (g_media_drm_id_enabled && prop_name != nullptr) {
         const char *prop_str = env->GetStringUTFChars(prop_name, nullptr);
         if (prop_str != nullptr) {
             if (strcmp(prop_str, "deviceUniqueId") == 0 ||
