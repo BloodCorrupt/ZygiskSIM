@@ -2,12 +2,13 @@
  * ZygiskSIM - Zygisk module to spoof eSIM support system-wide
  *
  * Architecture:
- *   1. Companion process (root) reads classes.dex AND libpine.so from module directory
- *   2. preAppSpecialize: fetch both payloads via companion socket
- *   3. postAppSpecialize: write libpine.so to app cache, load DEX, call HookEntry.init()
- *
- * The Pine library is sent via companion because NeoZygisk does NOT mount
- * module files into /system/lib64/ — so System.loadLibrary("pine") fails.
+ *   1. Companion process (root) reads classes.dex AND libpine.so (for ARM)
+ *   2. preAppSpecialize: fetch payloads via companion socket
+ *   3. postAppSpecialize:
+ *      - Installs native Dobby hooks for low-level property spoofing (x86_64, x86, ARM)
+ *      - Loads Java classes.dex
+ *      - On ARM: initializes Pine hooks via HookEntry.init()
+ *      - On x86_64: runs HookEntry with native + reflection/dynamic proxy fallback
  */
 
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 #include <android/log.h>
 
 #include "zygisk.hpp"
+#include "dobby/include/dobby.h"
 
 #define LOG_TAG "ZygiskSIM"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -50,8 +52,68 @@ static bool is_target_process(const char *package_name) {
     return false;
 }
 
+// Global spoof config
+static char g_spoof_model[64] = "Pixel 8";
+static char g_spoof_device[64] = "shiba";
+static char g_spoof_manufacturer[64] = "Google";
+static char g_spoof_brand[64] = "google";
+static char g_spoof_product[64] = "shiba";
+
 // =====================================================================
-// Helper: read all bytes from fd
+// Dobby Native Hooks
+// =====================================================================
+
+typedef int (*system_property_get_t)(const char *name, char *value);
+static system_property_get_t orig_system_property_get = nullptr;
+
+static int hooked_system_property_get(const char *name, char *value) {
+    if (name != nullptr && value != nullptr) {
+        if (strcmp(name, "ro.product.model") == 0) {
+            strncpy(value, g_spoof_model, 91);
+            return (int)strlen(value);
+        }
+        if (strcmp(name, "ro.product.device") == 0) {
+            strncpy(value, g_spoof_device, 91);
+            return (int)strlen(value);
+        }
+        if (strcmp(name, "ro.product.manufacturer") == 0) {
+            strncpy(value, g_spoof_manufacturer, 91);
+            return (int)strlen(value);
+        }
+        if (strcmp(name, "ro.product.brand") == 0) {
+            strncpy(value, g_spoof_brand, 91);
+            return (int)strlen(value);
+        }
+        if (strcmp(name, "ro.product.name") == 0) {
+            strncpy(value, g_spoof_product, 91);
+            return (int)strlen(value);
+        }
+        if (strcmp(name, "ro.build.product") == 0) {
+            strncpy(value, g_spoof_product, 91);
+            return (int)strlen(value);
+        }
+    }
+    if (orig_system_property_get) {
+        return orig_system_property_get(name, value);
+    }
+    return 0;
+}
+
+static void install_dobby_native_hooks() {
+    void *sym = DobbySymbolResolver("libc.so", "__system_property_get");
+    if (sym) {
+        if (DobbyHook(sym, (void *)hooked_system_property_get, (void **)&orig_system_property_get) == 0) {
+            LOGI("Dobby: successfully hooked __system_property_get natively");
+        } else {
+            LOGE("Dobby: failed to hook __system_property_get");
+        }
+    } else {
+        LOGD("Dobby: __system_property_get symbol not found");
+    }
+}
+
+// =====================================================================
+// Helper: read/write bytes from/to fd
 // =====================================================================
 
 static bool read_exact(int fd, void *buf, size_t count) {
@@ -86,7 +148,7 @@ static bool write_all(int fd, const void *buf, size_t count) {
 static void send_file(int socket_fd, const char *path) {
     int file_fd = open(path, O_RDONLY);
     if (file_fd < 0) {
-        LOGE("Companion: cannot open %s", path);
+        LOGD("Companion: cannot open %s (skipping)", path);
         uint32_t zero = 0;
         write(socket_fd, &zero, sizeof(zero));
         return;
@@ -118,12 +180,35 @@ static void companion_handler(int fd) {
     // 1. Send classes.dex
     send_file(fd, "/data/adb/modules/zygisksim/classes.dex");
 
-    // 2. Send libpine.so for the matching ABI
-#if defined(__LP64__)
-    send_file(fd, "/data/adb/modules/zygisksim/system/lib64/libpine.so");
-#else
-    send_file(fd, "/data/adb/modules/zygisksim/system/lib/libpine.so");
+    // 2. Check engine configuration (set during installation by customize.sh)
+    bool use_pine = true;
+    int engine_fd = open("/data/adb/modules/zygisksim/engine", O_RDONLY);
+    if (engine_fd >= 0) {
+        char buf[32] = {};
+        read(engine_fd, buf, sizeof(buf) - 1);
+        close(engine_fd);
+        if (strstr(buf, "dobby") != nullptr) {
+            use_pine = false;
+        }
+    }
+#if defined(__i386__) || defined(__x86_64__)
+    use_pine = false; // Always use Dobby on x86/x86_64 emulators
 #endif
+
+    // Send libpine.so only if Pine engine is active and on ARM
+    if (use_pine) {
+#if defined(__aarch64__)
+        send_file(fd, "/data/adb/modules/zygisksim/system/lib64/libpine.so");
+#elif defined(__arm__)
+        send_file(fd, "/data/adb/modules/zygisksim/system/lib/libpine.so");
+#else
+        uint32_t zero = 0;
+        write(fd, &zero, sizeof(zero));
+#endif
+    } else {
+        uint32_t zero = 0;
+        write(fd, &zero, sizeof(zero));
+    }
 
     // 3. Send config.json (optional — size=0 if not present)
     send_file(fd, "/data/adb/modules/zygisksim/config.json");
@@ -141,7 +226,6 @@ public:
     }
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
-        // Get the package name to decide if we should inject
         const char *raw_name = nullptr;
         if (args->nice_name) {
             raw_name = env->GetStringUTFChars(args->nice_name, nullptr);
@@ -194,22 +278,20 @@ public:
         }
         LOGI("DEX payload received: %u bytes", dex_sz);
 
-        // --- Read Pine library payload ---
+        // --- Read Pine library payload (optional on x86/x86_64) ---
         uint32_t pine_sz = 0;
-        if (!read_exact(companion_fd, &pine_sz, sizeof(pine_sz)) || pine_sz == 0) {
-            LOGE("Failed to read Pine library size from companion");
-            close(companion_fd);
-            return;
+        if (read_exact(companion_fd, &pine_sz, sizeof(pine_sz)) && pine_sz > 0) {
+            pine_data = (uint8_t *)malloc(pine_sz);
+            pine_size = pine_sz;
+            if (!read_exact(companion_fd, pine_data, pine_sz)) {
+                LOGE("Incomplete Pine library read");
+                free(pine_data); pine_data = nullptr; pine_size = 0;
+            } else {
+                LOGI("Pine library received: %u bytes", pine_sz);
+            }
+        } else {
+            LOGI("Pine library omitted for this architecture");
         }
-        pine_data = (uint8_t *)malloc(pine_sz);
-        pine_size = pine_sz;
-        if (!read_exact(companion_fd, pine_data, pine_sz)) {
-            LOGE("Incomplete Pine library read");
-            free(pine_data); pine_data = nullptr; pine_size = 0;
-            close(companion_fd);
-            return;
-        }
-        LOGI("Pine library received: %u bytes", pine_sz);
 
         // --- Read config.json payload (optional) ---
         uint32_t cfg_sz = 0;
@@ -230,6 +312,9 @@ public:
     }
 
     void postAppSpecialize([[maybe_unused]] const zygisk::AppSpecializeArgs *args) override {
+        // Install native Dobby hooks in the app process
+        install_dobby_native_hooks();
+
         if (dex_data == nullptr || dex_size == 0) {
             return;
         }
@@ -237,12 +322,10 @@ public:
         LOGI("Initializing hooks for %s...", package_name);
 
         // ----------------------------------------------------------
-        // Step 1: Write libpine.so to app's cache directory
+        // Step 1: Write libpine.so to app's cache directory (if ARM/Pine)
         // ----------------------------------------------------------
         char pine_path[512] = {};
         if (pine_data != nullptr && pine_size > 0 && app_data_dir[0] != '\0') {
-            // Recursively ensure app data dir and cache dir exist
-            // On first launch in work profiles, app_data_dir may not exist yet
             mkdir(app_data_dir, 0755);
             char cache_dir[512];
             snprintf(cache_dir, sizeof(cache_dir), "%s/cache", app_data_dir);
@@ -331,8 +414,6 @@ public:
 
         // ----------------------------------------------------------
         // Step 4: Call HookEntry.init(logDir, pineLibPath, configJson)
-        //         Wrapped so any Java exception is caught and cleared,
-        //         preventing a crash in the host app.
         // ----------------------------------------------------------
         char log_dir[512];
         if (app_data_dir[0] != '\0') {

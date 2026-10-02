@@ -28,8 +28,7 @@ import top.canyie.pine.callback.MethodHook;
 
 /**
  * Entry point for ZygiskSIM.
- * Reverted to Pine hooking framework. Uses dalvik.system.VMRuntime to bypass Hidden API policy
- * and disables Pine's native hidden API bypass to prevent SIGSEGV native crashes on newer Android versions.
+ * Supports Pine ART hooking on ARM/ARM64 and Dobby/Proxy fallback on x86/x86_64 emulators.
  */
 public class HookEntry {
 
@@ -37,6 +36,8 @@ public class HookEntry {
     private static Application sApplication = null;
 
     // Config defaults
+    private static String sEngine = "auto";
+    private static String sArch = "unknown";
     private static String sEid = "89049032005008882600033827513789";
     private static String sSpoofModel = "Pixel 8";
     private static String sSpoofDevice = "shiba";
@@ -46,31 +47,36 @@ public class HookEntry {
 
     public static void init(String logDir, String pineLibPath, String configJson) {
         sLogDir = logDir;
-        logStatic("ZygiskSIM Java payload initializing (Pine Architecture)...");
+        logStatic("ZygiskSIM Java payload initializing...");
 
-        // 1. Parse config.json if provided
+        // 1. Parse config.json if provided (contains detected architecture and engine)
         parseConfig(configJson);
 
-        // 2. Spoof device identity (pure reflection)
+        logStatic("Active Engine: " + sEngine + " (Arch: " + sArch + ")");
+
+        // 2. Spoof device identity (pure reflection, works on all architectures)
         spoofBuildFields();
 
         // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime in Java
         bypassHiddenApiRestrictions();
 
-        // 4. Disable Pine's native Hidden API bypass to prevent native SIGSEGV
-        disablePineNativeHiddenApiBypass();
+        // 4. Install IPackageManager dynamic proxy (works across all architectures)
+        installPackageManagerProxy();
 
-        // 5. Load Pine library
-        try {
-            loadPineLibrary(pineLibPath);
-        } catch (Throwable t) {
-            logStatic("Pine library load FAILED — hooks will not be installed: " + t.getMessage());
-            logStackTrace(t);
-            return;
+        // 5. If Pine engine is selected (or auto on ARM) and library path is provided:
+        if (!"dobby".equalsIgnoreCase(sEngine) && pineLibPath != null && !pineLibPath.trim().isEmpty()) {
+            try {
+                disablePineNativeHiddenApiBypass();
+                loadPineLibrary(pineLibPath);
+                installPineHooks();
+                logStatic("Pine ART hooks installed successfully (Pine Mode).");
+            } catch (Throwable t) {
+                logStatic("Pine library load failed: " + t.getMessage());
+                logStatic("Continuing in native Dobby / Dynamic Proxy mode.");
+            }
+        } else {
+            logStatic("Running in Dobby / x86_64 mode (Pine omitted). Java dynamic proxies active.");
         }
-
-        // 6. Install hooks immediately
-        installHooks();
     }
 
     private static void bypassHiddenApiRestrictions() {
@@ -175,7 +181,61 @@ public class HookEntry {
         }
     }
 
-    private static void installHooks() {
+    private static void installPackageManagerProxy() {
+        // Immediate replacement attempt
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+            sPackageManagerField.setAccessible(true);
+            Object currentPm = sPackageManagerField.get(null);
+            if (currentPm != null && !Proxy.isProxyClass(currentPm.getClass())) {
+                Object mock = createPackageManagerProxy(currentPm);
+                if (mock != null) {
+                    sPackageManagerField.set(null, mock);
+                    logStatic("Immediately replaced ActivityThread.sPackageManager with mock proxy.");
+                }
+            }
+        } catch (Throwable t) {
+            logStatic("Immediate sPackageManager replacement: " + t.getMessage());
+        }
+
+        // Background polling to ensure replacement when ActivityThread initializes sPackageManager
+        pollAndMockPackageManagerField();
+    }
+
+    private static Object createPackageManagerProxy(final Object originalPm) {
+        try {
+            Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+            return Proxy.newProxyInstance(
+                iPackageManagerClass.getClassLoader(),
+                new Class<?>[]{ iPackageManagerClass },
+                new InvocationHandler() {
+                    @Override
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                        if ("hasSystemFeature".equals(method.getName())) {
+                            if (args != null && args.length > 0) {
+                                String feature = (String) args[0];
+                                if ("android.hardware.telephony.euicc".equals(feature)) {
+                                    logStatic("Spoofed IPackageManager.hasSystemFeature(" + feature + ") -> true");
+                                    return true;
+                                }
+                            }
+                        }
+                        try {
+                            return method.invoke(originalPm, args);
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            logStatic("Failed to create IPackageManager proxy: " + t.getMessage());
+            return originalPm;
+        }
+    }
+
+    private static void installPineHooks() {
         logStatic("Installing Pine hooks...");
         try { hookEuiccManagerIsEnabled(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerIsEnabled failed: " + t.getMessage());
@@ -186,11 +246,8 @@ public class HookEntry {
         try { hookEuiccManagerGetEuiccInfo(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerGetEuiccInfo failed: " + t.getMessage());
         }
-        try { 
-            hookActivityThreadGetPackageManager(); 
-            pollAndMockPackageManagerField();
-        } catch (Throwable t) {
-            logStatic("  WARN: Package manager hybrid hook failed: " + t.getMessage());
+        try { hookActivityThreadGetPackageManager(); } catch (Throwable t) {
+            logStatic("  WARN: Pine ActivityThread hook failed: " + t.getMessage());
         }
         try { hookForActivationCode(); } catch (Throwable t) {
             logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
@@ -198,7 +255,7 @@ public class HookEntry {
         try { hookEuiccManagerDownloadSubscription(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerDownloadSubscription failed: " + t.getMessage());
         }
-        logStatic("Hook installation complete.");
+        logStatic("Pine hooks installation finished.");
     }
 
     private static void hookEuiccManagerGetEuiccInfo() {
@@ -269,30 +326,7 @@ public class HookEntry {
                         return;
                     }
 
-                    final Object targetPm = originalPm;
-                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-                    mMockPm = Proxy.newProxyInstance(
-                            iPackageManagerClass.getClassLoader(),
-                            new Class<?>[]{iPackageManagerClass},
-                            new InvocationHandler() {
-                                @Override
-                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                    if ("hasSystemFeature".equals(method.getName())) {
-                                        if (args != null && args.length > 0) {
-                                            String feature = (String) args[0];
-                                            if ("android.hardware.telephony.euicc".equals(feature)) {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    try {
-                                        return method.invoke(targetPm, args);
-                                    } catch (java.lang.reflect.InvocationTargetException e) {
-                                        throw e.getCause();
-                                    }
-                                }
-                            }
-                    );
+                    mMockPm = createPackageManagerProxy(originalPm);
                     callFrame.setResult(mMockPm);
                 }
             });
@@ -331,31 +365,7 @@ public class HookEntry {
                         return;
                     }
 
-                    final Object targetPm = originalPm;
-                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-                    Object mockPm = Proxy.newProxyInstance(
-                            iPackageManagerClass.getClassLoader(),
-                            new Class<?>[]{iPackageManagerClass},
-                            new InvocationHandler() {
-                                @Override
-                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                    if ("hasSystemFeature".equals(method.getName())) {
-                                        if (args != null && args.length > 0) {
-                                            String feature = (String) args[0];
-                                            if ("android.hardware.telephony.euicc".equals(feature)) {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    try {
-                                        return method.invoke(targetPm, args);
-                                    } catch (java.lang.reflect.InvocationTargetException e) {
-                                        throw e.getCause();
-                                    }
-                                }
-                            }
-                    );
-
+                    Object mockPm = createPackageManagerProxy(originalPm);
                     sPackageManagerField.set(null, mockPm);
                     logStatic("Successfully replaced ActivityThread.sPackageManager field with mock proxy.");
                 } catch (Throwable t) {
@@ -458,7 +468,7 @@ public class HookEntry {
 
     private static void handleActivationCode(String code) {
         logStatic("========================================");
-        logStatic("eSIM DOWNLOAD INTERCEPTED (Pine)");
+        logStatic("eSIM DOWNLOAD INTERCEPTED");
         logStatic("  Activation Code: " + code);
         logStatic("========================================");
 
@@ -487,6 +497,12 @@ public class HookEntry {
 
         try {
             JSONObject root = new JSONObject(configJson);
+            if (root.has("engine")) {
+                sEngine = root.optString("engine", sEngine);
+            }
+            if (root.has("arch")) {
+                sArch = root.optString("arch", sArch);
+            }
             if (root.has("eid")) {
                 sEid = root.getString("eid");
             }
@@ -500,6 +516,7 @@ public class HookEntry {
             }
 
             logStatic("  Parsed config.json successfully.");
+            logStatic("  Engine: " + sEngine + ", Arch: " + sArch);
             logStatic("  Config EID: " + sEid);
             logStatic("  Config Device: " + sSpoofModel + " (" + sSpoofDevice + ")");
         } catch (Throwable t) {
