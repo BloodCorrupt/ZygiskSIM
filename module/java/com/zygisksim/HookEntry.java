@@ -6,11 +6,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Binder;
-import android.os.IBinder;
-import android.os.IInterface;
-import android.os.Parcel;
-import android.os.RemoteException;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccManager;
 
@@ -23,11 +18,8 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import org.json.JSONObject;
 
@@ -38,9 +30,8 @@ import top.canyie.pine.callback.MethodHook;
  * Entry point for ZygiskSIM.
  * Supports:
  *   1. Direct ART Method Hooks (Universal for x86, x86_64, ARM, ARM64)
- *   2. Real Binder & ServiceManager.sCache mocks
- *   3. Dynamic IPackageManager proxies (hasSystemFeature)
- *   4. Pine ART method hooking (on ARM when available)
+ *   2. Non-blocking background PackageManager proxy for hasSystemFeature
+ *   3. Pine ART method hooking (on ARM when available)
  */
 public class HookEntry {
 
@@ -93,16 +84,10 @@ public class HookEntry {
         // 4. Install Direct ART Method Hooks (x86, x86_64, ARM, ARM64)
         installDirectArtMethodHooks();
 
-        // 5. Install IEuiccController real Binder mock into ServiceManager.sCache
-        installEuiccServiceMock();
+        // 5. Non-blocking background PackageManager proxy (hasSystemFeature)
+        pollAndMockPackageManagerField();
 
-        // 6. Install early PackageManager proxy (pre-empts ActivityThread)
-        installEarlyPackageManagerProxy();
-
-        // 7. Background safety-net: patch ApplicationPackageManager.mPM once app starts
-        startBackgroundPackageManagerPatch();
-
-        // 8. If Pine engine is active (on ARM) and library path is provided:
+        // 6. If Pine engine is active (on ARM) and library path is provided:
         if (!"dobby".equalsIgnoreCase(sEngine) && pineLibPath != null && !pineLibPath.trim().isEmpty()) {
             try {
                 disablePineNativeHiddenApiBypass();
@@ -110,11 +95,10 @@ public class HookEntry {
                 installPineHooks();
                 logStatic("Pine ART hooks installed successfully (Pine Mode).");
             } catch (Throwable t) {
-                logStatic("Pine library load failed: " + t.getMessage());
-                logStatic("Continuing with Direct ART & ServiceManager mocks.");
+                logStatic("Pine library load note: " + t.getMessage());
             }
         } else {
-            logStatic("Running in Direct ART / Dobby / x86_64 mode.");
+            logStatic("Running in Direct ART / x86_64 mode.");
         }
     }
 
@@ -306,345 +290,79 @@ public class HookEntry {
     }
 
     // =====================================================================
-    // Real Java Binder Implementation for IEuiccController
+    // Non-blocking Background PackageManager Proxy (Safe & Stable)
     // =====================================================================
 
-    public static class MockEuiccBinder extends Binder implements IInterface {
-        private final String mDescriptor;
-        private final Object mProxyTarget;
-
-        public MockEuiccBinder(String descriptor, Object proxyTarget) {
-            this.mDescriptor = descriptor;
-            this.mProxyTarget = proxyTarget;
-            attachInterface(this, descriptor);
-        }
-
-        @Override
-        public IInterface queryLocalInterface(String descriptor) {
-            return (IInterface) mProxyTarget;
-        }
-
-        @Override
-        public IBinder asBinder() {
-            return this;
-        }
-
-        @Override
-        protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
-            if (reply != null) {
-                reply.writeNoException();
-                reply.writeInt(1);
-            }
-            return true;
-        }
-    }
-
-    // =====================================================================
-    // ServiceManager & IEuiccController Mock Injection
-    // =====================================================================
-
-    private static void installEuiccServiceMock() {
-        try {
-            final Object mockController = createEuiccControllerProxy();
-            if (mockController == null) {
-                logStatic("Failed to create EuiccController proxy.");
-                return;
-            }
-
-            final MockEuiccBinder realBinder = new MockEuiccBinder("com.android.internal.telephony.euicc.IEuiccController", mockController);
-
-            try {
-                Class<?> smClass = Class.forName("android.os.ServiceManager");
-                Field sCacheField = smClass.getDeclaredField("sCache");
-                sCacheField.setAccessible(true);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> sCache = (Map<String, Object>) sCacheField.get(null);
-                if (sCache != null) {
-                    synchronized (sCache) {
-                        sCache.put("econtroller", realBinder);
-                        sCache.put("euicc_service", realBinder);
-                    }
-                    logStatic("Successfully injected MockEuiccBinder into ServiceManager.sCache.");
-                }
-            } catch (Throwable t) {
-                logStatic("ServiceManager.sCache injection note: " + t.getMessage());
-            }
-
-        } catch (Throwable t) {
-            logStatic("installEuiccServiceMock error: " + t.getMessage());
-            logStackTrace(t);
-        }
-    }
-
-    private static Object createEuiccControllerProxy() {
-        try {
-            Class<?> iInterfaceClass = Class.forName("android.os.IInterface");
-            Class<?> iEuiccControllerClass = null;
-            try {
-                iEuiccControllerClass = Class.forName("com.android.internal.telephony.euicc.IEuiccController");
-            } catch (Throwable t) {
-                try {
-                    iEuiccControllerClass = Class.forName("android.telephony.euicc.IEuiccController");
-                } catch (Throwable ignored) {}
-            }
-
-            List<Class<?>> ifaceList = new ArrayList<>();
-            ifaceList.add(iInterfaceClass);
-            if (iEuiccControllerClass != null) {
-                ifaceList.add(iEuiccControllerClass);
-            }
-
-            Class<?>[] interfaces = ifaceList.toArray(new Class<?>[0]);
-
-            return Proxy.newProxyInstance(
-                iEuiccControllerClass != null ? iEuiccControllerClass.getClassLoader() : HookEntry.class.getClassLoader(),
-                interfaces,
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        String name = method.getName();
-
-                        if ("asBinder".equals(name)) {
-                            return new MockEuiccBinder("com.android.internal.telephony.euicc.IEuiccController", proxy);
-                        }
-                        if ("isEnabled".equals(name)) {
-                            logStatic("Spoofed IEuiccController.isEnabled() -> true");
-                            return Boolean.TRUE;
-                        }
-                        if ("getEid".equals(name)) {
-                            logStatic("Spoofed IEuiccController.getEid() -> " + sEid);
-                            return sEid;
-                        }
-                        if ("getEuiccInfo".equals(name)) {
-                            logStatic("Spoofed IEuiccController.getEuiccInfo()");
-                            try {
-                                Class<?> infoClass = Class.forName("android.telephony.euicc.EuiccInfo");
-                                Constructor<?> ctor = infoClass.getDeclaredConstructor(String.class);
-                                ctor.setAccessible(true);
-                                return ctor.newInstance("1.0");
-                            } catch (Throwable t) {
-                                return null;
-                            }
-                        }
-                        if ("getOtaStatus".equals(name)) {
-                            return Integer.valueOf(0);
-                        }
-                        if ("downloadSubscription".equals(name)) {
-                            logStatic("Intercepted IEuiccController.downloadSubscription()!");
-                            if (args != null) {
-                                PendingIntent callbackIntent = null;
-                                for (Object arg : args) {
-                                    if (arg instanceof DownloadableSubscription) {
-                                        DownloadableSubscription sub = (DownloadableSubscription) arg;
-                                        String code = sub.getEncodedActivationCode();
-                                        if (code != null) {
-                                            handleActivationCode(code);
-                                        }
-                                    } else if (arg instanceof PendingIntent) {
-                                        callbackIntent = (PendingIntent) arg;
-                                    }
-                                }
-                                if (callbackIntent != null) {
-                                    try {
-                                        Intent resultIntent = new Intent();
-                                        callbackIntent.send(getApplicationContext(), 0, resultIntent);
-                                        logStatic("Triggered success callback intent for subscription download.");
-                                    } catch (Throwable t) {
-                                        logStatic("Failed to send callback intent: " + t.getMessage());
-                                    }
-                                }
-                            }
-                            return null;
-                        }
-                        if ("getDefaultDownloadableSubscriptionList".equals(name) ||
-                            "getDownloadableSubscriptionMetadata".equals(name)) {
-                            if (args != null) {
-                                for (Object arg : args) {
-                                    if (arg instanceof PendingIntent) {
-                                        try {
-                                            ((PendingIntent) arg).send(getApplicationContext(), 0, new Intent());
-                                        } catch (Throwable ignored) {}
-                                    }
-                                }
-                            }
-                            return null;
-                        }
-
-                        Class<?> returnType = method.getReturnType();
-                        if (returnType == boolean.class || returnType == Boolean.class) {
-                            return Boolean.TRUE;
-                        }
-                        if (returnType == int.class || returnType == Integer.class) {
-                            return Integer.valueOf(0);
-                        }
-                        if (returnType == String.class) {
-                            return "";
-                        }
-                        return null;
-                    }
-                }
-            );
-        } catch (Throwable t) {
-            logStatic("createEuiccControllerProxy error: " + t.getMessage());
-            return null;
-        }
-    }
-
-    // =====================================================================
-    // PackageManager Dynamic Proxy
-    // =====================================================================
-
-    private static Object createPackageManagerProxy(final Object originalPm) {
-        try {
-            Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-            return Proxy.newProxyInstance(
-                iPackageManagerClass.getClassLoader(),
-                new Class<?>[]{ iPackageManagerClass },
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        if ("hasSystemFeature".equals(method.getName())) {
-                            if (args != null && args.length > 0) {
-                                String feature = (String) args[0];
-                                if ("android.hardware.telephony.euicc".equals(feature)) {
-                                    logStatic("Spoofed IPackageManager.hasSystemFeature(" + feature + ") -> true");
-                                    return Boolean.TRUE;
-                                }
-                            }
-                        }
-                        try {
-                            return method.invoke(originalPm, args);
-                        } catch (java.lang.reflect.InvocationTargetException e) {
-                            throw e.getCause();
-                        }
-                    }
-                }
-            );
-        } catch (Throwable t) {
-            logStatic("Failed to create IPackageManager proxy: " + t.getMessage());
-            return originalPm;
-        }
-    }
-
-    private static void installEarlyPackageManagerProxy() {
-        try {
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            final Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
-            sPackageManagerField.setAccessible(true);
-
-            final Object currentPm = sPackageManagerField.get(null);
-            final Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
-            final Object[] realPmHolder = new Object[]{ currentPm };
-
-            Object proxy = Proxy.newProxyInstance(
-                iPackageManagerClass.getClassLoader(),
-                new Class<?>[]{ iPackageManagerClass },
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        String name = method.getName();
-
-                        if ("hasSystemFeature".equals(name) && args != null && args.length > 0) {
-                            if ("android.hardware.telephony.euicc".equals(args[0])) {
-                                logStatic("Intercepted hasSystemFeature(euicc) -> true");
-                                return Boolean.TRUE;
-                            }
-                        }
-
-                        if ("asBinder".equals(name)) {
-                            Object real = resolveRealPm(realPmHolder);
-                            if (real != null) {
-                                try {
-                                    return method.invoke(real, args);
-                                } catch (java.lang.reflect.InvocationTargetException e) {
-                                    throw e.getCause();
-                                }
-                            }
-                            return new Binder();
-                        }
-
-                        Object realPm = resolveRealPm(realPmHolder);
-                        if (realPm != null) {
-                            try {
-                                return method.invoke(realPm, args);
-                            } catch (java.lang.reflect.InvocationTargetException e) {
-                                throw e.getCause();
-                            }
-                        }
-
-                        Class<?> returnType = method.getReturnType();
-                        if (returnType == boolean.class || returnType == Boolean.class) return Boolean.FALSE;
-                        if (returnType == int.class || returnType == Integer.class) return Integer.valueOf(0);
-                        if (returnType == long.class || returnType == Long.class) return Long.valueOf(0L);
-                        if (returnType == String.class) return "";
-                        return null;
-                    }
-                }
-            );
-
-            sPackageManagerField.set(null, proxy);
-            logStatic("Installed early PackageManager proxy into ActivityThread.sPackageManager");
-        } catch (Throwable t) {
-            logStatic("Failed to install early PackageManager proxy: " + t.getMessage());
-            logStackTrace(t);
-        }
-    }
-
-    private static Object resolveRealPm(Object[] holder) {
-        if (holder[0] != null && !Proxy.isProxyClass(holder[0].getClass())) {
-            return holder[0];
-        }
-        try {
-            Class<?> smClass = Class.forName("android.os.ServiceManager");
-            Method getService = smClass.getDeclaredMethod("getService", String.class);
-            Object binder = getService.invoke(null, "package");
-            if (binder != null) {
-                Class<?> stubClass = Class.forName("android.content.pm.IPackageManager$Stub");
-                Method asInterface = stubClass.getDeclaredMethod("asInterface", IBinder.class);
-                Object realPm = asInterface.invoke(null, binder);
-                if (realPm != null && !Proxy.isProxyClass(realPm.getClass())) {
-                    holder[0] = realPm;
-                    return realPm;
-                }
-            }
-        } catch (Throwable ignored) {}
-        return null;
-    }
-
-    private static void startBackgroundPackageManagerPatch() {
+    private static void pollAndMockPackageManagerField() {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    for (int i = 0; i < 100; i++) {
+                    Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+                    Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+                    sPackageManagerField.setAccessible(true);
+
+                    Object originalPm = null;
+                    for (int i = 0; i < 100; i++) { // Poll for up to 10 seconds
+                        originalPm = sPackageManagerField.get(null);
+                        if (originalPm != null && !Proxy.isProxyClass(originalPm.getClass())) {
+                            break;
+                        }
                         Thread.sleep(100);
-                        Application app = null;
-                        try {
-                            Class<?> atClass = Class.forName("android.app.ActivityThread");
-                            Method currentApp = atClass.getDeclaredMethod("currentApplication");
-                            app = (Application) currentApp.invoke(null);
-                        } catch (Throwable ignored) {}
+                    }
+
+                    if (originalPm == null || Proxy.isProxyClass(originalPm.getClass())) {
+                        return;
+                    }
+
+                    final Object targetPm = originalPm;
+                    Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+
+                    Object mockPm = Proxy.newProxyInstance(
+                        iPackageManagerClass.getClassLoader(),
+                        new Class<?>[]{iPackageManagerClass},
+                        new InvocationHandler() {
+                            @Override
+                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                if ("hasSystemFeature".equals(method.getName())) {
+                                    if (args != null && args.length > 0) {
+                                        String feature = (String) args[0];
+                                        if ("android.hardware.telephony.euicc".equals(feature)) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                try {
+                                    return method.invoke(targetPm, args);
+                                } catch (java.lang.reflect.InvocationTargetException e) {
+                                    throw e.getCause();
+                                }
+                            }
+                        }
+                    );
+
+                    sPackageManagerField.set(null, mockPm);
+                    logStatic("Successfully installed PackageManager proxy on sPackageManager");
+
+                    // Also patch ApplicationPackageManager.mPM once Application is ready
+                    for (int i = 0; i < 50; i++) {
+                        Thread.sleep(100);
+                        Application app = getApplicationContext();
                         if (app != null) {
                             try {
                                 android.content.pm.PackageManager pm = app.getPackageManager();
                                 if (pm != null) {
                                     Field mPMField = pm.getClass().getDeclaredField("mPM");
                                     mPMField.setAccessible(true);
-                                    Object currentMPM = mPMField.get(pm);
-                                    if (currentMPM != null && !Proxy.isProxyClass(currentMPM.getClass())) {
-                                        Object mockPm = createPackageManagerProxy(currentMPM);
-                                        mPMField.set(pm, mockPm);
-                                        logStatic("Background: patched ApplicationPackageManager.mPM");
-                                    }
+                                    mPMField.set(pm, mockPm);
+                                    logStatic("Successfully patched ApplicationPackageManager.mPM");
                                 }
-                            } catch (Throwable t) {
-                                logStatic("Background mPM patch: " + t.getMessage());
-                            }
+                            } catch (Throwable ignored) {}
                             break;
                         }
                     }
                 } catch (Throwable t) {
-                    logStatic("Background PM patch error: " + t.getMessage());
+                    logStatic("Background PackageManager proxy note: " + t.getMessage());
                 }
             }
         }).start();
@@ -664,9 +382,6 @@ public class HookEntry {
         }
         try { hookEuiccManagerGetEuiccInfo(); } catch (Throwable t) {
             logStatic("  WARN: hookEuiccManagerGetEuiccInfo failed: " + t.getMessage());
-        }
-        try { hookActivityThreadGetPackageManager(); } catch (Throwable t) {
-            logStatic("  WARN: Pine ActivityThread hook failed: " + t.getMessage());
         }
         try { hookForActivationCode(); } catch (Throwable t) {
             logStatic("  WARN: hookForActivationCode failed: " + t.getMessage());
@@ -725,34 +440,6 @@ public class HookEntry {
             logStatic("  Hooked EuiccManager.getEid()");
         } catch (Throwable t) {
             logStatic("  EuiccManager.getEid() not available on this API level");
-        }
-    }
-
-    private static void hookActivityThreadGetPackageManager() {
-        try {
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            Method getPackageManager = activityThreadClass.getDeclaredMethod("getPackageManager");
-            Pine.hook(getPackageManager, new MethodHook() {
-                private Object mMockPm = null;
-
-                @Override
-                public void afterCall(Pine.CallFrame callFrame) throws Throwable {
-                    Object originalPm = callFrame.getResult();
-                    if (originalPm == null) return;
-
-                    if (mMockPm != null) {
-                        callFrame.setResult(mMockPm);
-                        return;
-                    }
-
-                    mMockPm = createPackageManagerProxy(originalPm);
-                    callFrame.setResult(mMockPm);
-                }
-            });
-            logStatic("Successfully hooked ActivityThread.getPackageManager() via Pine.");
-        } catch (Throwable t) {
-            logStatic("Failed to hook ActivityThread.getPackageManager(): " + t.getMessage());
-            logStackTrace(t);
         }
     }
 
