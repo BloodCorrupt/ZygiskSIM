@@ -8,7 +8,7 @@
  *      - Loads Java classes.dex into app via InMemoryDexClassLoader
  *      - Registers native ART method hooking helpers via JNI
  *      - Calls HookEntry.init() to install direct ART method hooks,
- *        dynamic proxies, ServiceManager mocks, and Pine (on ARM)
+ *        dynamic proxies, and Pine (on ARM)
  */
 
 #include <stdlib.h>
@@ -261,19 +261,23 @@ static jboolean JNICALL native_hook_method(
 
     // Read target current flags
     uint32_t target_flags = *(uint32_t*)((char*)target_art + g_offset_access_flags);
+    uint32_t is_static = (target_flags & 0x0008); // kAccStatic
 
     // Write hook entry points to target ArtMethod
     *(void**)((char*)target_art + g_offset_jni) = hook_jni;
     *(void**)((char*)target_art + g_offset_quick_code) = hook_quick;
 
-    // Set kAccNative (0x0100) and kAccPublic (0x0001), clear interpreter/JIT optimization flags
-    uint32_t new_flags = (target_flags | 0x0100 /* kAccNative */ | 0x0001 /* kAccPublic */)
+    // Set kAccNative (0x0100) and kAccPublic (0x0001), preserve static/instance, clear interpreter flags
+    uint32_t new_flags = (target_flags | 0x0100 /* kAccNative */ | 0x0001 /* kAccPublic */ | is_static)
                          & ~0x0002 /* ~kAccPrivate */
                          & ~0x0004 /* ~kAccProtected */
                          & ~0x01000000 /* ~kAccCompileDontBother */
                          & ~0x40000000 /* ~kAccFastInterpreterToInterpreterInvoke */
                          & ~0x00080000 /* ~kAccFastNative */
                          & ~0x00100000 /* ~kAccCriticalNative */;
+    if (!is_static) {
+        new_flags &= ~0x0008; // ensure non-static
+    }
     *(uint32_t*)((char*)target_art + g_offset_access_flags) = new_flags;
 
 #if defined(__arm__) || defined(__aarch64__)
@@ -293,18 +297,23 @@ static void JNICALL native_probe_offsets(
 
 // =====================================================================
 // Native Hook Implementations (Direct JNI execution, Zero Bytecode)
+// Instance methods have signature: (JNIEnv *env, jobject thiz, ...)
+// Static methods have signature:   (JNIEnv *env, jclass clazz, ...)
 // =====================================================================
 
+// Non-static: EuiccManager.isEnabled() -> (JNIEnv*, jobject)
 static jboolean JNICALL hook_native_isEnabled(JNIEnv *, [[maybe_unused]] jobject thiz) {
     LOGI("Spoofed EuiccManager.isEnabled() -> true (Direct ART Hook)");
     return JNI_TRUE;
 }
 
+// Non-static: EuiccManager.getEid() -> (JNIEnv*, jobject)
 static jstring JNICALL hook_native_getEid(JNIEnv *env, [[maybe_unused]] jobject thiz) {
     LOGI("Spoofed EuiccManager.getEid() -> %s (Direct ART Hook)", g_spoof_eid);
     return env->NewStringUTF(g_spoof_eid);
 }
 
+// Non-static: EuiccManager.getEuiccInfo() -> (JNIEnv*, jobject)
 static jobject JNICALL hook_native_getEuiccInfo(JNIEnv *env, [[maybe_unused]] jobject thiz) {
     LOGI("Spoofed EuiccManager.getEuiccInfo() (Direct ART Hook)");
     jclass info_cls = env->FindClass("android/telephony/euicc/EuiccInfo");
@@ -323,6 +332,7 @@ static jobject JNICALL hook_native_getEuiccInfo(JNIEnv *env, [[maybe_unused]] jo
     return res;
 }
 
+// STATIC: DownloadableSubscription.forActivationCode(String) -> (JNIEnv*, jclass, jstring)
 static jobject JNICALL hook_native_forActivationCode(
     JNIEnv *env, [[maybe_unused]] jclass clazz, jstring code) {
     if (code != nullptr) {
@@ -345,6 +355,7 @@ static jobject JNICALL hook_native_forActivationCode(
     return nullptr;
 }
 
+// Non-static: EuiccManager.downloadSubscription(DownloadableSubscription, boolean, PendingIntent)
 static void JNICALL hook_native_downloadSubscription(
     JNIEnv *env, [[maybe_unused]] jobject thiz, jobject sub, [[maybe_unused]] jboolean switch_after_download, jobject callback_intent) {
     LOGI("========================================");
@@ -390,6 +401,7 @@ static void JNICALL hook_native_downloadSubscription(
     }
 }
 
+// Non-static: TelephonyManager.getCardIdForDefaultEuicc() -> (JNIEnv*, jobject)
 static jint JNICALL hook_native_getCardIdForDefaultEuicc(JNIEnv *, [[maybe_unused]] jobject thiz) {
     LOGI("Spoofed TelephonyManager.getCardIdForDefaultEuicc() -> 1 (Direct ART Hook)");
     return 1;
@@ -398,12 +410,12 @@ static jint JNICALL hook_native_getCardIdForDefaultEuicc(JNIEnv *, [[maybe_unuse
 static const JNINativeMethod G_HOOK_ENTRY_METHODS[] = {
     { "nativeHookMethod", "(Ljava/lang/reflect/Method;Ljava/lang/reflect/Method;)Z", (void*)native_hook_method },
     { "nativeProbeOffsets", "(Ljava/lang/reflect/Method;Ljava/lang/reflect/Method;)V", (void*)native_probe_offsets },
-    { "hook_native_isEnabled", "(Ljava/lang/Object;)Z", (void*)hook_native_isEnabled },
-    { "hook_native_getEid", "(Ljava/lang/Object;)Ljava/lang/String;", (void*)hook_native_getEid },
-    { "hook_native_getEuiccInfo", "(Ljava/lang/Object;)Ljava/lang/Object;", (void*)hook_native_getEuiccInfo },
+    { "hook_native_isEnabled", "()Z", (void*)hook_native_isEnabled },
+    { "hook_native_getEid", "()Ljava/lang/String;", (void*)hook_native_getEid },
+    { "hook_native_getEuiccInfo", "()Ljava/lang/Object;", (void*)hook_native_getEuiccInfo },
     { "hook_native_forActivationCode", "(Ljava/lang/String;)Ljava/lang/Object;", (void*)hook_native_forActivationCode },
-    { "hook_native_downloadSubscription", "(Ljava/lang/Object;Ljava/lang/Object;ZLjava/lang/Object;)V", (void*)hook_native_downloadSubscription },
-    { "hook_native_getCardIdForDefaultEuicc", "(Ljava/lang/Object;)I", (void*)hook_native_getCardIdForDefaultEuicc },
+    { "hook_native_downloadSubscription", "(Ljava/lang/Object;ZLjava/lang/Object;)V", (void*)hook_native_downloadSubscription },
+    { "hook_native_getCardIdForDefaultEuicc", "()I", (void*)hook_native_getCardIdForDefaultEuicc },
 };
 
 // =====================================================================
@@ -485,7 +497,7 @@ static void companion_handler(int fd) {
         }
     }
 #if defined(__i386__) || defined(__x86_64__)
-    use_pine = false; // Always use Dobby / Direct ART hook on x86/x86_64 emulators
+    use_pine = false; // Always use Direct ART hook on x86/x86_64 emulators
 #endif
 
     // Send libpine.so only if Pine engine is active and on ARM

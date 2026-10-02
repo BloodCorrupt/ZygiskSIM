@@ -54,16 +54,20 @@ public class HookEntry {
 
     public static native boolean nativeHookMethod(Method target, Method hook);
     public static native void nativeProbeOffsets(Method m1, Method m2);
-    public static native boolean hook_native_isEnabled(Object thiz);
-    public static native String hook_native_getEid(Object thiz);
-    public static native Object hook_native_getEuiccInfo(Object thiz);
+
+    // Instance native hooks (matching target instance methods)
+    public native boolean hook_native_isEnabled();
+    public native String hook_native_getEid();
+    public native Object hook_native_getEuiccInfo();
+    public native void hook_native_downloadSubscription(Object sub, boolean switchAfterDownload, Object callbackIntent);
+    public native int hook_native_getCardIdForDefaultEuicc();
+
+    // Static native hook (matching target static method)
     public static native Object hook_native_forActivationCode(String code);
-    public static native void hook_native_downloadSubscription(Object thiz, Object sub, boolean switchAfterDownload, Object callbackIntent);
-    public static native int hook_native_getCardIdForDefaultEuicc(Object thiz);
 
     public static class ProbeHelper {
-        public static void probe1() {}
-        public static void probe2() {}
+        public void probe1() {}
+        public void probe2() {}
     }
 
     public static void init(String logDir, String pineLibPath, String configJson) {
@@ -118,10 +122,10 @@ public class HookEntry {
             logStatic("Offset probing warning: " + t.getMessage());
         }
 
-        // 1. EuiccManager.isEnabled()
+        // 1. EuiccManager.isEnabled() [instance]
         try {
             Method target = EuiccManager.class.getDeclaredMethod("isEnabled");
-            Method hook = HookEntry.class.getDeclaredMethod("hook_native_isEnabled", Object.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_isEnabled");
             if (nativeHookMethod(target, hook)) {
                 logStatic("  Direct ART Hook: EuiccManager.isEnabled() -> SUCCESS");
             }
@@ -129,10 +133,10 @@ public class HookEntry {
             logStatic("  EuiccManager.isEnabled() hook note: " + t.getMessage());
         }
 
-        // 2. EuiccManager.getEid()
+        // 2. EuiccManager.getEid() [instance]
         try {
             Method target = EuiccManager.class.getDeclaredMethod("getEid");
-            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEid", Object.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEid");
             if (nativeHookMethod(target, hook)) {
                 logStatic("  Direct ART Hook: EuiccManager.getEid() -> SUCCESS");
             }
@@ -140,10 +144,10 @@ public class HookEntry {
             logStatic("  EuiccManager.getEid() hook note: " + t.getMessage());
         }
 
-        // 3. EuiccManager.getEuiccInfo()
+        // 3. EuiccManager.getEuiccInfo() [instance]
         try {
             Method target = EuiccManager.class.getDeclaredMethod("getEuiccInfo");
-            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEuiccInfo", Object.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getEuiccInfo");
             if (nativeHookMethod(target, hook)) {
                 logStatic("  Direct ART Hook: EuiccManager.getEuiccInfo() -> SUCCESS");
             }
@@ -151,7 +155,7 @@ public class HookEntry {
             logStatic("  EuiccManager.getEuiccInfo() not found on this API level");
         }
 
-        // 4. DownloadableSubscription.forActivationCode(String)
+        // 4. DownloadableSubscription.forActivationCode(String) [static]
         try {
             Method target = DownloadableSubscription.class.getDeclaredMethod("forActivationCode", String.class);
             Method hook = HookEntry.class.getDeclaredMethod("hook_native_forActivationCode", String.class);
@@ -162,12 +166,12 @@ public class HookEntry {
             logStatic("  DownloadableSubscription.forActivationCode() hook note: " + t.getMessage());
         }
 
-        // 5. EuiccManager.downloadSubscription(...)
+        // 5. EuiccManager.downloadSubscription(...) [instance]
         try {
             Method target = EuiccManager.class.getDeclaredMethod("downloadSubscription",
                     DownloadableSubscription.class, boolean.class, PendingIntent.class);
             Method hook = HookEntry.class.getDeclaredMethod("hook_native_downloadSubscription",
-                    Object.class, Object.class, boolean.class, Object.class);
+                    Object.class, boolean.class, Object.class);
             if (nativeHookMethod(target, hook)) {
                 logStatic("  Direct ART Hook: EuiccManager.downloadSubscription() -> SUCCESS");
             }
@@ -175,11 +179,11 @@ public class HookEntry {
             logStatic("  EuiccManager.downloadSubscription() hook note: " + t.getMessage());
         }
 
-        // 6. TelephonyManager.getCardIdForDefaultEuicc()
+        // 6. TelephonyManager.getCardIdForDefaultEuicc() [instance]
         try {
             Class<?> tmClass = Class.forName("android.telephony.TelephonyManager");
             Method target = tmClass.getDeclaredMethod("getCardIdForDefaultEuicc");
-            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getCardIdForDefaultEuicc", Object.class);
+            Method hook = HookEntry.class.getDeclaredMethod("hook_native_getCardIdForDefaultEuicc");
             if (nativeHookMethod(target, hook)) {
                 logStatic("  Direct ART Hook: TelephonyManager.getCardIdForDefaultEuicc() -> SUCCESS");
             }
