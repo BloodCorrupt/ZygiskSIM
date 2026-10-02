@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Axe Spoofer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-app: #0d0d12;
+  --bg-card: #15151e;
+  --bg-card-hover: #1a1a26;
+  --bg-input: #0a0a0f;
+  --border-card: #222230;
+  --border-focus: #7c3aed;
+  --text-title: #9d4edd;
+  --text-main: #f3f4f6;
+  --text-muted: #8b8d99;
+  --purple-main: #7c3aed;
+  --purple-gradient: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+  --purple-btn: #6d28d9;
+  --purple-btn-hover: #7c3aed;
+  --purple-glow: rgba(124, 58, 237, 0.4);
+  --success: #10b981;
+  --danger: #ef4444;
+  --radius-card: 16px;
+  --radius-btn: 20px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-app);
+  color: var(--text-main);
+  min-height: 100vh;
+  padding-bottom: 90px;
+}
+
+/* App Header */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.25rem 0.75rem 1.25rem;
+  position: sticky;
+  top: 0;
+  background: rgba(13, 13, 18, 0.92);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.app-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.25rem;
+  transition: all 0.2s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+
+/* Container */
+.container {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Spoofer Cards */
+.spoofer-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  position: relative;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.spoofer-card:hover {
+  border-color: rgba(124, 58, 237, 0.4);
+  background: var(--bg-card-hover);
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-label {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-title);
+}
+
+/* Custom Checkbox */
+.custom-checkbox {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.custom-checkbox input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.checkmark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 22px;
+  width: 22px;
+  background-color: #242434;
+  border: 1.5px solid #3c3c52;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.custom-checkbox input:checked ~ .checkmark {
+  background-color: #8b5cf6;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
+}
+
+.checkmark:after {
+  content: "";
+  position: absolute;
+  display: none;
+}
+
+.custom-checkbox input:checked ~ .checkmark:after {
+  display: block;
+  left: 7px;
+  top: 3px;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+
+/* Value Field */
+.value-container {
+  display: flex;
+  align-items: flex-start;
+}
+
+.value-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.92rem;
+  color: var(--text-main);
+  word-break: break-all;
+  white-space: normal;
+  outline: none;
+  resize: none;
+  line-height: 1.5;
+}
+
+.value-input:focus {
+  color: #a78bfa;
+}
+
+/* Card Bottom */
+.card-bottom {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.btn-random {
+  background: var(--purple-gradient);
+  color: #ffffff;
+  border: none;
+  padding: 0.45rem 1.35rem;
+  border-radius: var(--radius-btn);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 4px 12px var(--purple-glow);
+  transition: all 0.2s ease;
+}
+
+.btn-random:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.6);
+}
+
+.btn-random:active {
+  transform: scale(0.96);
+}
+
+/* Target Apps Section */
+.collapsible-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: 1.25rem;
+}
+
+.collapsible-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.collapsible-title {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #60a5fa;
+}
+
+.target-list {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.target-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0f0f17;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+.target-item span {
+  word-break: break-all;
+}
+
+.btn-del {
+  background: transparent;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 0 0.4rem;
+  font-size: 1rem;
+}
+
+.add-target-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.add-target-input {
+  flex: 1;
+  background: #0a0a0f;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.add-target-input:focus {
+  border-color: #60a5fa;
+}
+
+.btn-add {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Floating Bottom Toolbar */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(13, 13, 18, 0.95);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  justify-content: center;
+  z-index: 200;
+}
+
+.bar-content {
+  max-width: 520px;
+  width: 100%;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-action-main {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  transition: all 0.2s;
+}
+
+.btn-random-all {
+  background: #272738;
+  color: #e2e8f0;
+  border: 1px solid #3c3c52;
+}
+
+.btn-random-all:hover {
+  background: #33334a;
+}
+
+.btn-save-apply {
+  background: var(--purple-gradient);
+  color: #ffffff;
+  box-shadow: 0 4px 16px var(--purple-glow);
+}
+
+.btn-save-apply:hover {
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.7);
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 85px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #1e1e2d;
+  color: #f1f5f9;
+  border: 1px solid #7c3aed;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  padding: 0.65rem 1.25rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.25s ease;
+  z-index: 300;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-title">Axe Spoofer</div>
+  <div class="header-actions">
+    <button class="icon-btn" onclick="randomizeAll()" title="Randomize All">🎲</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- 1. ANDROID ID -->
+  <div class="spoofer-card" id="card-android-id">
+    <div class="card-top">
+      <span class="card-label">ANDROID ID</span>
+      <label class="custom-checkbox">
+        <input type="checkbox" id="chk-android-id" checked>
+        <span class="checkmark"></span>
+      </label>
+    </div>
+    <div class="value-container">
+      <textarea id="val-android-id" class="value-input" rows="1" spellcheck="false">f5ff848873c1a17d</textarea>
+    </div>
+    <div class="card-bottom">
+      <button class="btn-random" onclick="randomizeField('android-id')">Random</button>
+    </div>
+  </div>
+
+  <!-- 2. GSF ID -->
+  <div class="spoofer-card" id="card-gsf-id">
+    <div class="card-top">
+      <span class="card-label">GSF ID</span>
+      <label class="custom-checkbox">
+        <input type="checkbox" id="chk-gsf-id" checked>
+        <span class="checkmark"></span>
+      </label>
+    </div>
+    <div class="value-container">
+      <textarea id="val-gsf-id" class="value-input" rows="1" spellcheck="false">67db684e29db56a0</textarea>
+    </div>
+    <div class="card-bottom">
+      <button class="btn-random" onclick="randomizeField('gsf-id')">Random</button>
+    </div>
+  </div>
+
+  <!-- 3. ADS ID -->
+  <div class="spoofer-card" id="card-ads-id">
+    <div class="card-top">
+      <span class="card-label">ADS ID</span>
+      <label class="custom-checkbox">
+        <input type="checkbox" id="chk-ads-id" checked>
+        <span class="checkmark"></span>
+      </label>
+    </div>
+    <div class="value-container">
+      <textarea id="val-ads-id" class="value-input" rows="2" spellcheck="false">c0725525-4660-4cd0-b3ea-c712e7adb543</textarea>
+    </div>
+    <div class="card-bottom">
+      <button class="btn-random" onclick="randomizeField('ads-id')">Random</button>
+    </div>
+  </div>
+
+  <!-- 4. APP SET ID -->
+  <div class="spoofer-card" id="card-app-set-id">
+    <div class="card-top">
+      <span class="card-label">APP SET ID</span>
+      <label class="custom-checkbox">
+        <input type="checkbox" id="chk-app-set-id" checked>
+        <span class="checkmark"></span>
+      </label>
+    </div>
+    <div class="value-container">
+      <textarea id="val-app-set-id" class="value-input" rows="2" spellcheck="false">68939b1b-0bb8-47f7-880b-a95d60ef77d0</textarea>
+    </div>
+    <div class="card-bottom">
+      <button class="btn-random" onclick="randomizeField('app-set-id')">Random</button>
+    </div>
+  </div>
+
+  <!-- 5. MEDIA DRM ID -->
+  <div class="spoofer-card" id="card-media-drm-id">
+    <div class="card-top">
+      <span class="card-label">MEDIA DRM ID</span>
+      <label class="custom-checkbox">
+        <input type="checkbox" id="chk-media-drm-id" checked>
+        <span class="checkmark"></span>
+      </label>
+    </div>
+    <div class="value-container">
+      <textarea id="val-media-drm-id" class="value-input" rows="3" spellcheck="false">c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c</textarea>
+    </div>
+    <div class="card-bottom">
+      <button class="btn-random" onclick="randomizeField('media-drm-id')">Random</button>
+    </div>
+  </div>
+
+  <!-- Target Apps Manager -->
+  <div class="collapsible-card">
+    <div class="collapsible-header" onclick="toggleTargetList()">
+      <span class="collapsible-title">🎯 Target Applications</span>
+      <span id="target-toggle-icon" style="color: var(--text-muted);">▼</span>
+    </div>
+    <div id="target-body" style="display: none;">
+      <div class="target-list" id="target-list-container">
+        <!-- Rendered dynamically -->
+      </div>
+      <div class="add-target-row">
+        <input type="text" id="new-target-input" class="add-target-input" placeholder="e.g. travel.eskimo.esim">
+        <button class="btn-add" onclick="addTargetApp()">+ Add</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Floating Action Bar -->
+<div class="bottom-bar">
+  <div class="bar-content">
+    <button class="btn-action-main btn-random-all" onclick="randomizeAll()">
+      <span>🎲</span> Randomize All
+    </button>
+    <button class="btn-action-main btn-save-apply" onclick="saveConfiguration()">
+      <span>💾</span> Save & Apply
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast">Saved successfully!</div>
+
+<script>
+const CONFIG_PATH = "/data/adb/modules/axespoofer/config.json";
+
+let currentConfig = {
+  enabled: true,
+  targets: [
+    "travel.eskimo.esim",
+    "com.wonet.usims",
+    "com.airalo.android",
+    "com.trustroam",
+    "com.nomad.app",
+    "com.holafly.android",
+    "com.samsung.android.euicc"
+  ],
+  android_id: { enabled: true, value: "f5ff848873c1a17d" },
+  gsf_id: { enabled: true, value: "67db684e29db56a0" },
+  ads_id: { enabled: true, value: "c0725525-4660-4cd0-b3ea-c712e7adb543" },
+  app_set_id: { enabled: true, value: "68939b1b-0bb8-47f7-880b-a95d60ef77d0" },
+  media_drm_id: { enabled: true, value: "c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c" }
+};
+
+// Hex & UUID Generators
+function randHex(len) {
+  const chars = "0123456789abcdef";
+  let res = "";
+  for (let i = 0; i < len; i++) {
+    res += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return res;
+}
+
+function randUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function randomizeField(key) {
+  if (key === 'android-id') {
+    document.getElementById('val-android-id').value = randHex(16);
+  } else if (key === 'gsf-id') {
+    document.getElementById('val-gsf-id').value = randHex(16);
+  } else if (key === 'ads-id') {
+    document.getElementById('val-ads-id').value = randUUID();
+  } else if (key === 'app-set-id') {
+    document.getElementById('val-app-set-id').value = randUUID();
+  } else if (key === 'media-drm-id') {
+    document.getElementById('val-media-drm-id').value = randHex(64);
+  }
+  showToast(`Randomized ${key.replace(/-/g, ' ').toUpperCase()}`);
+}
+
+function randomizeAll() {
+  if (document.getElementById('chk-android-id').checked) {
+    document.getElementById('val-android-id').value = randHex(16);
+  }
+  if (document.getElementById('chk-gsf-id').checked) {
+    document.getElementById('val-gsf-id').value = randHex(16);
+  }
+  if (document.getElementById('chk-ads-id').checked) {
+    document.getElementById('val-ads-id').value = randUUID();
+  }
+  if (document.getElementById('chk-app-set-id').checked) {
+    document.getElementById('val-app-set-id').value = randUUID();
+  }
+  if (document.getElementById('chk-media-drm-id').checked) {
+    document.getElementById('val-media-drm-id').value = randHex(64);
+  }
+  showToast("All active identifiers randomized!");
+}
+
+// UI Sync
+function syncUIFromConfig() {
+  document.getElementById('chk-android-id').checked = currentConfig.android_id.enabled;
+  document.getElementById('val-android-id').value = currentConfig.android_id.value;
+
+  document.getElementById('chk-gsf-id').checked = currentConfig.gsf_id.enabled;
+  document.getElementById('val-gsf-id').value = currentConfig.gsf_id.value;
+
+  document.getElementById('chk-ads-id').checked = currentConfig.ads_id.enabled;
+  document.getElementById('val-ads-id').value = currentConfig.ads_id.value;
+
+  document.getElementById('chk-app-set-id').checked = currentConfig.app_set_id.enabled;
+  document.getElementById('val-app-set-id').value = currentConfig.app_set_id.value;
+
+  document.getElementById('chk-media-drm-id').checked = currentConfig.media_drm_id.enabled;
+  document.getElementById('val-media-drm-id').value = currentConfig.media_drm_id.value;
+
+  renderTargetList();
+}
+
+function syncConfigFromUI() {
+  currentConfig.android_id.enabled = document.getElementById('chk-android-id').checked;
+  currentConfig.android_id.value = document.getElementById('val-android-id').value.trim();
+
+  currentConfig.gsf_id.enabled = document.getElementById('chk-gsf-id').checked;
+  currentConfig.gsf_id.value = document.getElementById('val-gsf-id').value.trim();
+
+  currentConfig.ads_id.enabled = document.getElementById('chk-ads-id').checked;
+  currentConfig.ads_id.value = document.getElementById('val-ads-id').value.trim();
+
+  currentConfig.app_set_id.enabled = document.getElementById('chk-app-set-id').checked;
+  currentConfig.app_set_id.value = document.getElementById('val-app-set-id').value.trim();
+
+  currentConfig.media_drm_id.enabled = document.getElementById('chk-media-drm-id').checked;
+  currentConfig.media_drm_id.value = document.getElementById('val-media-drm-id').value.trim();
+}
+
+// Target Apps Manager
+function renderTargetList() {
+  const container = document.getElementById('target-list-container');
+  container.innerHTML = '';
+  currentConfig.targets.forEach((pkg, index) => {
+    const item = document.createElement('div');
+    item.className = 'target-item';
+    item.innerHTML = `
+      <span>${pkg}</span>
+      <button class="btn-del" onclick="removeTargetApp(${index})">✕</button>
+    `;
+    container.appendChild(item);
+  });
+}
+
+function addTargetApp() {
+  const input = document.getElementById('new-target-input');
+  const val = input.value.trim();
+  if (val && !currentConfig.targets.includes(val)) {
+    currentConfig.targets.push(val);
+    renderTargetList();
+    input.value = '';
+    showToast(`Added ${val}`);
+  }
+}
+
+function removeTargetApp(index) {
+  const removed = currentConfig.targets.splice(index, 1);
+  renderTargetList();
+  showToast(`Removed ${removed}`);
+}
+
+function toggleTargetList() {
+  const body = document.getElementById('target-body');
+  const icon = document.getElementById('target-toggle-icon');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    icon.textContent = '▲';
+  } else {
+    body.style.display = 'none';
+    icon.textContent = '▼';
+  }
+}
+
+// Root Bridge (KernelSU / APatch / Magisk WebUI)
+async function execCommand(cmd) {
+  if (window.ksu && window.ksu.exec) {
+    return new Promise((resolve) => {
+      window.ksu.exec(cmd, "{}", (code, stdout, stderr) => {
+        resolve({ code, stdout, stderr });
+      });
+    });
+  } else if (window.exec) {
+    return new Promise((resolve) => {
+      window.exec(cmd, (stdout, stderr) => {
+        resolve({ code: 0, stdout, stderr });
+      });
+    });
+  }
+  return null;
+}
+
+async function loadConfiguration() {
+  try {
+    const res = await execCommand(`cat "${CONFIG_PATH}"`);
+    if (res && res.stdout) {
+      currentConfig = JSON.parse(res.stdout);
+    } else {
+      const cached = localStorage.getItem('axespoofer_config');
+      if (cached) currentConfig = JSON.parse(cached);
+    }
+  } catch (e) {
+    console.log("Using default configuration");
+  }
+  syncUIFromConfig();
+}
+
+async function saveConfiguration() {
+  syncConfigFromUI();
+  const jsonStr = JSON.stringify(currentConfig, null, 2);
+  localStorage.setItem('axespoofer_config', jsonStr);
+
+  try {
+    const escaped = jsonStr.replace(/'/g, "'\\''");
+    const writeCmd = `echo '${escaped}' > "${CONFIG_PATH}" && chmod 644 "${CONFIG_PATH}"`;
+    await execCommand(writeCmd);
+    showToast("💾 Configuration Saved & Applied!");
+  } catch (e) {
+    showToast("Saved to browser storage");
+  }
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+// Initialize on page load
+window.addEventListener('DOMContentLoaded', () => {
+  loadConfiguration();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "targets": [
+    "travel.eskimo.esim",
+    "com.wonet.usims",
+    "com.airalo.android",
+    "com.trustroam",
+    "com.nomad.app",
+    "com.holafly.android",
+    "com.samsung.android.euicc"
+  ],
+  "android_id": {
+    "enabled": true,
+    "value": "f5ff848873c1a17d"
+  },
+  "gsf_id": {
+    "enabled": true,
+    "value": "67db684e29db56a0"
+  },
+  "ads_id": {
+    "enabled": true,
+    "value": "c0725525-4660-4cd0-b3ea-c712e7adb543"
+  },
+  "app_set_id": {
+    "enabled": true,
+    "value": "68939b1b-0bb8-47f7-880b-a95d60ef77d0"
+  },
+  "media_drm_id": {
+    "enabled": true,
+    "value": "c32f4a943fe9840c2e6f554dcd6d6987bff8a56ca6e406d00435578214c5547c"
+  }
+}

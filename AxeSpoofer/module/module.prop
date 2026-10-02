@@ -1,0 +1,7 @@
+id=axespoofer
+name=Axe Spoofer
+version=v1.0.0
+versionCode=100
+author=BloodCorrupt
+description=Universal Zygisk device identifier spoofer with WebUI & Action button. Spoofs Android ID, GSF ID, Ads ID, App Set ID, and Media DRM ID for target apps.
+action=true
