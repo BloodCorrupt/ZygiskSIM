@@ -52,65 +52,7 @@ static bool is_target_process(const char *package_name) {
     return false;
 }
 
-// Global spoof config
-static char g_spoof_model[64] = "Pixel 8";
-static char g_spoof_device[64] = "shiba";
-static char g_spoof_manufacturer[64] = "Google";
-static char g_spoof_brand[64] = "google";
-static char g_spoof_product[64] = "shiba";
 
-// =====================================================================
-// Dobby Native Hooks
-// =====================================================================
-
-typedef int (*system_property_get_t)(const char *name, char *value);
-static system_property_get_t orig_system_property_get = nullptr;
-
-static int hooked_system_property_get(const char *name, char *value) {
-    if (name != nullptr && value != nullptr) {
-        if (strcmp(name, "ro.product.model") == 0) {
-            strncpy(value, g_spoof_model, 91);
-            return (int)strlen(value);
-        }
-        if (strcmp(name, "ro.product.device") == 0) {
-            strncpy(value, g_spoof_device, 91);
-            return (int)strlen(value);
-        }
-        if (strcmp(name, "ro.product.manufacturer") == 0) {
-            strncpy(value, g_spoof_manufacturer, 91);
-            return (int)strlen(value);
-        }
-        if (strcmp(name, "ro.product.brand") == 0) {
-            strncpy(value, g_spoof_brand, 91);
-            return (int)strlen(value);
-        }
-        if (strcmp(name, "ro.product.name") == 0) {
-            strncpy(value, g_spoof_product, 91);
-            return (int)strlen(value);
-        }
-        if (strcmp(name, "ro.build.product") == 0) {
-            strncpy(value, g_spoof_product, 91);
-            return (int)strlen(value);
-        }
-    }
-    if (orig_system_property_get) {
-        return orig_system_property_get(name, value);
-    }
-    return 0;
-}
-
-static void install_dobby_native_hooks() {
-    void *sym = DobbySymbolResolver("libc.so", "__system_property_get");
-    if (sym) {
-        if (DobbyHook(sym, (void *)hooked_system_property_get, (void **)&orig_system_property_get) == 0) {
-            LOGI("Dobby: successfully hooked __system_property_get natively");
-        } else {
-            LOGE("Dobby: failed to hook __system_property_get");
-        }
-    } else {
-        LOGD("Dobby: __system_property_get symbol not found");
-    }
-}
 
 // =====================================================================
 // Helper: read/write bytes from/to fd
@@ -312,14 +254,12 @@ public:
     }
 
     void postAppSpecialize([[maybe_unused]] const zygisk::AppSpecializeArgs *args) override {
-        // Install native Dobby hooks in the app process
-        install_dobby_native_hooks();
-
+        // MUST check first: exit immediately for non-target processes (prevents any interference with system_server / system apps)
         if (dex_data == nullptr || dex_size == 0) {
             return;
         }
 
-        LOGI("Initializing hooks for %s...", package_name);
+        LOGI("Initializing hooks for target app %s...", package_name);
 
         // ----------------------------------------------------------
         // Step 1: Write libpine.so to app's cache directory (if ARM/Pine)
