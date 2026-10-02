@@ -261,23 +261,20 @@ static jboolean JNICALL native_hook_method(
 
     // Read target current flags
     uint32_t target_flags = *(uint32_t*)((char*)target_art + g_offset_access_flags);
-    uint32_t is_static = (target_flags & 0x0008); // kAccStatic
+    uint32_t is_static = (target_flags & 0x0008); // kAccStatic = 0x0008
 
     // Write hook entry points to target ArtMethod
     *(void**)((char*)target_art + g_offset_jni) = hook_jni;
     *(void**)((char*)target_art + g_offset_quick_code) = hook_quick;
 
-    // Set kAccNative (0x0100) and kAccPublic (0x0001), preserve static/instance, clear interpreter flags
-    uint32_t new_flags = (target_flags | 0x0100 /* kAccNative */ | 0x0001 /* kAccPublic */ | is_static)
-                         & ~0x0002 /* ~kAccPrivate */
-                         & ~0x0004 /* ~kAccProtected */
-                         & ~0x01000000 /* ~kAccCompileDontBother */
-                         & ~0x40000000 /* ~kAccFastInterpreterToInterpreterInvoke */
-                         & ~0x00080000 /* ~kAccFastNative */
-                         & ~0x00100000 /* ~kAccCriticalNative */;
-    if (!is_static) {
-        new_flags &= ~0x0008; // ensure non-static
+    // Reset hotness count to 0
+    if (g_art_method_size >= 16) {
+        *(uint16_t*)((char*)target_art + 14) = 0;
     }
+
+    // Set clean access flags: kAccPublic (0x01) | kAccNative (0x100) | kAccCompileDontBother (0x02000000)
+    // and preserve only is_static (0x08). Strip ALL optimization/precompiled/interpreter flags!
+    uint32_t new_flags = 0x0001 /* kAccPublic */ | 0x0100 /* kAccNative */ | 0x02000000 /* kAccCompileDontBother */ | is_static;
     *(uint32_t*)((char*)target_art + g_offset_access_flags) = new_flags;
 
 #if defined(__arm__) || defined(__aarch64__)
