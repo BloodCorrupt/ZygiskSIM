@@ -57,7 +57,7 @@ public class HookEntry {
         sLogDir = logDir;
         logStatic("ZygiskSIM Java payload initializing...");
 
-        // 1. Parse config.json if provided (contains detected architecture and engine)
+        // 1. Parse config.json if provided
         parseConfig(configJson);
 
         logStatic("Active Engine: " + sEngine + " (Arch: " + sArch + ")");
@@ -68,13 +68,13 @@ public class HookEntry {
         // 3. Bypass Hidden API restrictions via dalvik.system.VMRuntime in Java
         bypassHiddenApiRestrictions();
 
-        // 4. Install IEuiccController & ServiceManager real Binder mock (non-blocking)
+        // 4. Install IEuiccController real Binder mock into ServiceManager.sCache thread-safely
         installEuiccServiceMock();
 
-        // 5. Install IPackageManager dynamic proxy in background (non-blocking)
-        installPackageManagerProxy();
+        // 5. Start non-blocking background polling for ActivityThread.sPackageManager
+        hookPackageManagerSafely();
 
-        // 6. If Pine engine is selected (or auto on ARM) and library path is provided:
+        // 6. If Pine engine is active (on ARM) and library path is provided:
         if (!"dobby".equalsIgnoreCase(sEngine) && pineLibPath != null && !pineLibPath.trim().isEmpty()) {
             try {
                 disablePineNativeHiddenApiBypass();
@@ -237,7 +237,7 @@ public class HookEntry {
 
             final MockEuiccBinder realBinder = new MockEuiccBinder("com.android.internal.telephony.euicc.IEuiccController", mockController);
 
-            // 1. Inject real Binder into ServiceManager.sCache
+            // Inject real Binder into ServiceManager.sCache thread-safely
             try {
                 Class<?> smClass = Class.forName("android.os.ServiceManager");
                 Field sCacheField = smClass.getDeclaredField("sCache");
@@ -245,33 +245,14 @@ public class HookEntry {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> sCache = (Map<String, Object>) sCacheField.get(null);
                 if (sCache != null) {
-                    sCache.put("econtroller", realBinder);
-                    sCache.put("euicc_service", realBinder);
-                    logStatic("Successfully injected MockEuiccBinder into ServiceManager.sCache for econtroller.");
+                    synchronized (sCache) {
+                        sCache.put("econtroller", realBinder);
+                        sCache.put("euicc_service", realBinder);
+                    }
+                    logStatic("Successfully injected MockEuiccBinder into ServiceManager.sCache.");
                 }
             } catch (Throwable t) {
                 logStatic("ServiceManager.sCache injection note: " + t.getMessage());
-            }
-
-            // 2. Inject into TelephonyFrameworkInitializer (Android 10+)
-            try {
-                Class<?> tfiClass = Class.forName("android.telephony.TelephonyFrameworkInitializer");
-                Method getTsm = tfiClass.getDeclaredMethod("getTelephonyServiceManager");
-                Object tsm = getTsm.invoke(null);
-                if (tsm != null) {
-                    Method getRegisterer = tsm.getClass().getDeclaredMethod("getEuiccControllerServiceRegisterer");
-                    Object registerer = getRegisterer.invoke(tsm);
-                    if (registerer != null) {
-                        try {
-                            Field serviceField = registerer.getClass().getDeclaredField("mService");
-                            serviceField.setAccessible(true);
-                            serviceField.set(registerer, realBinder);
-                        } catch (Throwable ignored) {}
-                        logStatic("Successfully registered MockEuiccBinder in TelephonyServiceManager.");
-                    }
-                }
-            } catch (Throwable t) {
-                logStatic("TelephonyServiceManager injection note: " + t.getMessage());
             }
 
         } catch (Throwable t) {
@@ -301,7 +282,7 @@ public class HookEntry {
             Class<?>[] interfaces = ifaceList.toArray(new Class<?>[0]);
 
             return Proxy.newProxyInstance(
-                HookEntry.class.getClassLoader(),
+                iEuiccControllerClass != null ? iEuiccControllerClass.getClassLoader() : HookEntry.class.getClassLoader(),
                 interfaces,
                 new InvocationHandler() {
                     @Override
@@ -377,18 +358,7 @@ public class HookEntry {
                             return null;
                         }
 
-                        // --- Object methods ---
-                        if ("toString".equals(name)) {
-                            return "MockIEuiccControllerProxy";
-                        }
-                        if ("hashCode".equals(name)) {
-                            return Integer.valueOf(System.identityHashCode(proxy));
-                        }
-                        if ("equals".equals(name)) {
-                            return Boolean.valueOf(args != null && args.length > 0 && proxy == args[0]);
-                        }
-
-                        // Default primitive return types
+                        // Default primitive types
                         Class<?> returnType = method.getReturnType();
                         if (returnType == boolean.class || returnType == Boolean.class) {
                             return Boolean.TRUE;
@@ -396,13 +366,15 @@ public class HookEntry {
                         if (returnType == int.class || returnType == Integer.class) {
                             return Integer.valueOf(0);
                         }
+                        if (returnType == String.class) {
+                            return "";
+                        }
                         return null;
                     }
                 }
             );
         } catch (Throwable t) {
             logStatic("createEuiccControllerProxy error: " + t.getMessage());
-            logStackTrace(t);
             return null;
         }
     }
@@ -411,15 +383,11 @@ public class HookEntry {
     // PackageManager Dynamic Proxy (All Architectures)
     // =====================================================================
 
-    private static void installPackageManagerProxy() {
-        pollAndMockPackageManagerField();
-    }
-
     private static Object createPackageManagerProxy(final Object originalPm) {
         try {
             Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
             return Proxy.newProxyInstance(
-                HookEntry.class.getClassLoader(),
+                iPackageManagerClass.getClassLoader(),
                 new Class<?>[]{ iPackageManagerClass },
                 new InvocationHandler() {
                     @Override
@@ -447,7 +415,7 @@ public class HookEntry {
         }
     }
 
-    private static void pollAndMockPackageManagerField() {
+    private static void hookPackageManagerSafely() {
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -456,28 +424,17 @@ public class HookEntry {
                     Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
                     sPackageManagerField.setAccessible(true);
 
-                    Object originalPm = null;
-                    for (int i = 0; i < 100; i++) { // Poll for up to 10 seconds in background
-                        originalPm = sPackageManagerField.get(null);
-                        if (originalPm != null) {
+                    for (int i = 0; i < 200; i++) { // Poll for up to 20 seconds in background
+                        Object originalPm = sPackageManagerField.get(null);
+                        if (originalPm != null && !Proxy.isProxyClass(originalPm.getClass())) {
+                            final Object targetPm = originalPm;
+                            Object mockPm = createPackageManagerProxy(targetPm);
+                            sPackageManagerField.set(null, mockPm);
+                            logStatic("Successfully replaced ActivityThread.sPackageManager field with mock proxy.");
                             break;
                         }
                         Thread.sleep(100);
                     }
-
-                    if (originalPm == null) {
-                        logStatic("sPackageManager is still null after 10 seconds.");
-                        return;
-                    }
-
-                    if (Proxy.isProxyClass(originalPm.getClass())) {
-                        return;
-                    }
-
-                    final Object targetPm = originalPm;
-                    Object mockPm = createPackageManagerProxy(targetPm);
-                    sPackageManagerField.set(null, mockPm);
-                    logStatic("Successfully replaced ActivityThread.sPackageManager field with mock proxy.");
                 } catch (Throwable t) {
                     logStatic("Background sPackageManager field override failed: " + t.getMessage());
                 }
