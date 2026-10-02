@@ -71,10 +71,13 @@ public class HookEntry {
         // 4. Install IEuiccController real Binder mock into ServiceManager.sCache thread-safely
         installEuiccServiceMock();
 
-        // 5. Start non-blocking background polling for ActivityThread.sPackageManager
-        hookPackageManagerSafely();
+        // 5. Install early PackageManager proxy SYNCHRONOUSLY (pre-empts ActivityThread)
+        installEarlyPackageManagerProxy();
 
-        // 6. If Pine engine is active (on ARM) and library path is provided:
+        // 6. Background safety-net: patch ApplicationPackageManager.mPM once app starts
+        startBackgroundPackageManagerPatch();
+
+        // 7. If Pine engine is active (on ARM) and library path is provided:
         if (!"dobby".equalsIgnoreCase(sEngine) && pineLibPath != null && !pineLibPath.trim().isEmpty()) {
             try {
                 disablePineNativeHiddenApiBypass();
@@ -415,7 +418,157 @@ public class HookEntry {
         }
     }
 
-    private static void hookPackageManagerSafely() {
+    /**
+     * Pre-emptively sets ActivityThread.sPackageManager to our proxy BEFORE the app runs.
+     * Since postAppSpecialize runs before ActivityThread.main(), sPackageManager is null.
+     * By setting it to our proxy now, ActivityThread.getPackageManager() will find it
+     * non-null and return our proxy directly — the real PM is never set by the framework.
+     * Our proxy lazily resolves the real IPackageManager via ServiceManager for delegation.
+     */
+    private static void installEarlyPackageManagerProxy() {
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            final Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
+            sPackageManagerField.setAccessible(true);
+
+            final Object currentPm = sPackageManagerField.get(null);
+            final Class<?> iPackageManagerClass = Class.forName("android.content.pm.IPackageManager");
+            final Object[] realPmHolder = new Object[]{ currentPm };
+
+            Object proxy = Proxy.newProxyInstance(
+                iPackageManagerClass.getClassLoader(),
+                new Class<?>[]{ iPackageManagerClass },
+                new InvocationHandler() {
+                    @Override
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                        String name = method.getName();
+
+                        // Intercept hasSystemFeature for euicc
+                        if ("hasSystemFeature".equals(name) && args != null && args.length > 0) {
+                            if ("android.hardware.telephony.euicc".equals(args[0])) {
+                                logStatic("Intercepted hasSystemFeature(euicc) -> true");
+                                return Boolean.TRUE;
+                            }
+                        }
+
+                        // Handle asBinder - delegate to real PM or return dummy
+                        if ("asBinder".equals(name)) {
+                            Object real = resolveRealPm(realPmHolder);
+                            if (real != null) {
+                                try {
+                                    return method.invoke(real, args);
+                                } catch (java.lang.reflect.InvocationTargetException e) {
+                                    throw e.getCause();
+                                }
+                            }
+                            return new Binder();
+                        }
+
+                        // For all other methods, delegate to the real PackageManager
+                        Object realPm = resolveRealPm(realPmHolder);
+                        if (realPm != null) {
+                            try {
+                                return method.invoke(realPm, args);
+                            } catch (java.lang.reflect.InvocationTargetException e) {
+                                throw e.getCause();
+                            }
+                        }
+
+                        // Real PM not available yet - return safe defaults
+                        Class<?> returnType = method.getReturnType();
+                        if (returnType == boolean.class || returnType == Boolean.class) return Boolean.FALSE;
+                        if (returnType == int.class || returnType == Integer.class) return Integer.valueOf(0);
+                        if (returnType == long.class || returnType == Long.class) return Long.valueOf(0L);
+                        if (returnType == String.class) return "";
+                        return null;
+                    }
+                }
+            );
+
+            sPackageManagerField.set(null, proxy);
+            logStatic("Installed early PackageManager proxy into ActivityThread.sPackageManager");
+        } catch (Throwable t) {
+            logStatic("Failed to install early PackageManager proxy: " + t.getMessage());
+            logStackTrace(t);
+            // Fallback to the old polling approach
+            hookPackageManagerFallback();
+        }
+    }
+
+    /**
+     * Lazily resolves the real IPackageManager via ServiceManager.
+     * Called by the early proxy when it needs to delegate a method call.
+     */
+    private static Object resolveRealPm(Object[] holder) {
+        if (holder[0] != null && !Proxy.isProxyClass(holder[0].getClass())) {
+            return holder[0];
+        }
+        try {
+            Class<?> smClass = Class.forName("android.os.ServiceManager");
+            Method getService = smClass.getDeclaredMethod("getService", String.class);
+            Object binder = getService.invoke(null, "package");
+            if (binder != null) {
+                Class<?> stubClass = Class.forName("android.content.pm.IPackageManager$Stub");
+                Method asInterface = stubClass.getDeclaredMethod("asInterface", IBinder.class);
+                Object realPm = asInterface.invoke(null, binder);
+                if (realPm != null && !Proxy.isProxyClass(realPm.getClass())) {
+                    holder[0] = realPm;
+                    return realPm;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /**
+     * Background safety-net: once the Application is created, patch its
+     * ApplicationPackageManager.mPM field with our proxy to cover any cached references.
+     */
+    private static void startBackgroundPackageManagerPatch() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    for (int i = 0; i < 100; i++) {
+                        Thread.sleep(100);
+                        Application app = null;
+                        try {
+                            Class<?> atClass = Class.forName("android.app.ActivityThread");
+                            Method currentApp = atClass.getDeclaredMethod("currentApplication");
+                            app = (Application) currentApp.invoke(null);
+                        } catch (Throwable ignored) {}
+                        if (app != null) {
+                            try {
+                                android.content.pm.PackageManager pm = app.getPackageManager();
+                                if (pm != null) {
+                                    Field mPMField = pm.getClass().getDeclaredField("mPM");
+                                    mPMField.setAccessible(true);
+                                    Object currentMPM = mPMField.get(pm);
+                                    if (currentMPM != null && !Proxy.isProxyClass(currentMPM.getClass())) {
+                                        Object mockPm = createPackageManagerProxy(currentMPM);
+                                        mPMField.set(pm, mockPm);
+                                        logStatic("Background: patched ApplicationPackageManager.mPM");
+                                    } else {
+                                        logStatic("Background: mPM already proxied (early proxy working)");
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                logStatic("Background mPM patch: " + t.getMessage());
+                            }
+                            break;
+                        }
+                    }
+                } catch (Throwable t) {
+                    logStatic("Background PM patch error: " + t.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    /**
+     * Fallback: polling-based replacement of sPackageManager (used if early proxy fails).
+     */
+    private static void hookPackageManagerFallback() {
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -423,20 +576,18 @@ public class HookEntry {
                     Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
                     Field sPackageManagerField = activityThreadClass.getDeclaredField("sPackageManager");
                     sPackageManagerField.setAccessible(true);
-
-                    for (int i = 0; i < 200; i++) { // Poll for up to 20 seconds in background
+                    for (int i = 0; i < 200; i++) {
                         Object originalPm = sPackageManagerField.get(null);
                         if (originalPm != null && !Proxy.isProxyClass(originalPm.getClass())) {
-                            final Object targetPm = originalPm;
-                            Object mockPm = createPackageManagerProxy(targetPm);
+                            Object mockPm = createPackageManagerProxy(originalPm);
                             sPackageManagerField.set(null, mockPm);
-                            logStatic("Successfully replaced ActivityThread.sPackageManager field with mock proxy.");
+                            logStatic("Fallback: replaced sPackageManager with proxy.");
                             break;
                         }
                         Thread.sleep(100);
                     }
                 } catch (Throwable t) {
-                    logStatic("Background sPackageManager field override failed: " + t.getMessage());
+                    logStatic("Fallback sPackageManager override failed: " + t.getMessage());
                 }
             }
         }).start();
